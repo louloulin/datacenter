@@ -64,7 +64,8 @@ object OrderProcessingExample {
     /**
      * 创建订单处理工作流
      */
-    private fun createOrderProcessingWorkflow(): Workflow {
+    @JvmStatic
+    fun createOrderProcessingWorkflow(): Workflow {
         return workflow("orderProcessing", "Order Processing Workflow") {
             source {
                 fromTopic("orders")

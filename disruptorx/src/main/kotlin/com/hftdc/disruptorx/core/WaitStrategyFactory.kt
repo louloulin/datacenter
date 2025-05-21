@@ -1,144 +1,218 @@
 package com.hftdc.disruptorx.core
 
-import com.lmax.disruptor.BlockingWaitStrategy
-import com.lmax.disruptor.BusySpinWaitStrategy
-import com.lmax.disruptor.SleepingWaitStrategy
-import com.lmax.disruptor.WaitStrategy
-import com.lmax.disruptor.YieldingWaitStrategy
+import com.hftdc.disruptorx.distributed.DistributedWaitStrategy
 import java.util.concurrent.TimeUnit
-import kotlin.time.Duration
-import kotlin.time.toJavaDuration
+import java.util.concurrent.locks.LockSupport
 
 /**
- * 等待策略工厂，提供不同类型的等待策略实例
+ * 等待策略工厂
+ * 提供各种等待策略实现，用于性能优化
  */
 object WaitStrategyFactory {
     
     /**
-     * 创建阻塞等待策略
-     * 特点：最低CPU使用率，但吞吐量较低
-     * @return 阻塞等待策略
-     */
-    fun createBlockingWaitStrategy(): WaitStrategy {
-        return BlockingWaitStrategy()
-    }
-    
-    /**
      * 创建忙等待策略
-     * 特点：最高性能，但CPU使用率极高
+     * 提供最低延迟，但CPU使用率最高
      * @return 忙等待策略
      */
-    fun createBusySpinWaitStrategy(): WaitStrategy {
+    fun createBusySpinWaitStrategy(): DistributedWaitStrategy {
         return BusySpinWaitStrategy()
     }
     
     /**
-     * 创建让步等待策略
-     * 特点：平衡性能和CPU使用，适合多核系统
-     * @return 让步等待策略
+     * 创建让出等待策略
+     * 提供较低延迟，同时降低CPU使用率
+     * @return 让出等待策略
      */
-    fun createYieldingWaitStrategy(): WaitStrategy {
+    fun createYieldingWaitStrategy(): DistributedWaitStrategy {
         return YieldingWaitStrategy()
     }
     
     /**
-     * 创建睡眠等待策略
-     * 特点：低CPU使用率，逐渐增加响应延迟
-     * @param retries 重试次数
-     * @param sleepTime 睡眠时间
-     * @param timeUnit 时间单位
-     * @return 睡眠等待策略
+     * 创建休眠等待策略
+     * 提供低CPU使用率，但延迟较高
+     * @param spinTries 自旋尝试次数，默认100
+     * @return 休眠等待策略
      */
-    fun createSleepingWaitStrategy(
-        retries: Int = 200,
-        sleepTime: Long = 100,
-        timeUnit: TimeUnit = TimeUnit.NANOSECONDS
-    ): WaitStrategy {
-        return SleepingWaitStrategy(retries, sleepTime, timeUnit)
-    }
-    
-    /**
-     * 创建睡眠等待策略
-     * 特点：低CPU使用率，逐渐增加响应延迟
-     * @param retries 重试次数
-     * @param sleepTime 睡眠时间（Kotlin Duration）
-     * @return 睡眠等待策略
-     */
-    fun createSleepingWaitStrategy(
-        retries: Int = 200,
-        sleepTime: Duration
-    ): WaitStrategy {
-        val javaDuration = sleepTime.toJavaDuration()
-        return SleepingWaitStrategy(retries, javaDuration.toNanos(), TimeUnit.NANOSECONDS)
-    }
-    
-    /**
-     * 自适应等待策略
-     * 结合让步和睡眠策略的优点
-     */
-    class AdaptiveWaitStrategy(
-        private val yieldThreshold: Int = 100,
-        private val sleepThreshold: Int = 1000,
-        private val parkThreshold: Int = 10000
-    ) : WaitStrategy {
-        private val yieldingStrategy = YieldingWaitStrategy()
-        private val sleepingStrategy = SleepingWaitStrategy()
-        
-        override fun waitFor(sequence: Long, cursor: com.lmax.disruptor.Sequence, dependentSequence: com.lmax.disruptor.Sequence, barrier: com.lmax.disruptor.SequenceBarrier): Long {
-            var counter = 0
-            var availableSequence = dependentSequence.get()
-            
-            while (sequence > availableSequence) {
-                counter++
-                
-                if (counter < yieldThreshold) {
-                    // 低延迟模式 - 使用忙等待
-                    Thread.onSpinWait()
-                } else if (counter < sleepThreshold) {
-                    // 中等延迟模式 - 使用让步
-                    Thread.yield()
-                } else if (counter < parkThreshold) {
-                    // 高延迟模式 - 使用短暂睡眠
-                    try {
-                        TimeUnit.NANOSECONDS.sleep(1)
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        barrier.alert()
-                    }
-                } else {
-                    // 超长延迟模式 - 使用阻塞
-                    try {
-                        TimeUnit.MILLISECONDS.sleep(1)
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        barrier.alert()
-                    }
-                }
-                
-                availableSequence = dependentSequence.get()
-            }
-            
-            return availableSequence
-        }
-        
-        override fun signalAllWhenBlocking() {
-            // 自适应策略不需要特殊处理
-        }
+    fun createSleepingWaitStrategy(spinTries: Int = 100): DistributedWaitStrategy {
+        return SleepingWaitStrategy(spinTries)
     }
     
     /**
      * 创建自适应等待策略
-     * 特点：根据等待时间自动调整策略
-     * @param yieldThreshold 让步阈值
-     * @param sleepThreshold 睡眠阈值
-     * @param parkThreshold 阻塞阈值
+     * 根据等待时间自动调整等待策略
+     * @param yieldThreshold 让出阈值（纳秒）
+     * @param sleepThreshold 休眠阈值（纳秒）
+     * @param parkThreshold 阻塞阈值（纳秒）
      * @return 自适应等待策略
      */
     fun createAdaptiveWaitStrategy(
-        yieldThreshold: Int = 100,
-        sleepThreshold: Int = 1000,
-        parkThreshold: Int = 10000
-    ): WaitStrategy {
+        yieldThreshold: Long = 100,
+        sleepThreshold: Long = 1000,
+        parkThreshold: Long = 10000
+    ): DistributedWaitStrategy {
         return AdaptiveWaitStrategy(yieldThreshold, sleepThreshold, parkThreshold)
+    }
+}
+
+/**
+ * 忙等待策略
+ * 提供最低延迟，但CPU使用率最高
+ */
+class BusySpinWaitStrategy : DistributedWaitStrategy {
+    
+    override fun waitForSequence(sequence: Long) {
+        // 纯自旋等待，不释放CPU
+    }
+    
+    override fun waitForSequenceWithTimeout(sequence: Long, timeoutNanos: Long) {
+        val endTime = System.nanoTime() + timeoutNanos
+        while (System.nanoTime() < endTime) {
+            // 纯自旋等待，直到超时
+        }
+    }
+}
+
+/**
+ * 让出等待策略
+ * 提供较低延迟，同时降低CPU使用率
+ */
+class YieldingWaitStrategy : DistributedWaitStrategy {
+    
+    override fun waitForSequence(sequence: Long) {
+        // 让出CPU时间片
+        Thread.yield()
+    }
+    
+    override fun waitForSequenceWithTimeout(sequence: Long, timeoutNanos: Long) {
+        val endTime = System.nanoTime() + timeoutNanos
+        while (System.nanoTime() < endTime) {
+            Thread.yield()
+        }
+    }
+}
+
+/**
+ * 休眠等待策略
+ * 提供低CPU使用率，但延迟较高
+ */
+class SleepingWaitStrategy(private val spinTries: Int) : DistributedWaitStrategy {
+    
+    override fun waitForSequence(sequence: Long) {
+        var counter = spinTries
+        
+        while (counter > 0) {
+            counter--
+            // 先尝试自旋一定次数
+        }
+        
+        // 超过自旋次数后开始让出CPU
+        Thread.yield()
+        
+        // 如果还是没有可用序列，开始短时间休眠
+        try {
+            TimeUnit.MILLISECONDS.sleep(1)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw RuntimeException(e)
+        }
+    }
+    
+    override fun waitForSequenceWithTimeout(sequence: Long, timeoutNanos: Long) {
+        val endTime = System.nanoTime() + timeoutNanos
+        
+        var counter = spinTries
+        
+        while (System.nanoTime() < endTime) {
+            if (counter > 0) {
+                counter--
+                // 先尝试自旋一定次数
+            } else {
+                // 超过自旋次数后开始让出CPU
+                Thread.yield()
+                
+                // 如果还有较长时间，开始短时间休眠
+                if (System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1) < endTime) {
+                    try {
+                        TimeUnit.MILLISECONDS.sleep(1)
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw RuntimeException(e)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 自适应等待策略
+ * 根据等待时间自动调整等待策略
+ */
+class AdaptiveWaitStrategy(
+    private val yieldThreshold: Long,
+    private val sleepThreshold: Long,
+    private val parkThreshold: Long
+) : DistributedWaitStrategy {
+    
+    override fun waitForSequence(sequence: Long) {
+        var waitTime = 0L
+        
+        // 根据等待时间选择不同策略
+        if (waitTime < yieldThreshold) {
+            // 短期等待：忙等待
+        } else if (waitTime < sleepThreshold) {
+            // 中等等待：让出CPU
+            Thread.yield()
+        } else if (waitTime < parkThreshold) {
+            // 较长等待：短时间休眠
+            try {
+                TimeUnit.NANOSECONDS.sleep(Math.min(waitTime / 2, 1000000))
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw RuntimeException(e)
+            }
+        } else {
+            // 长时间等待：阻塞线程
+            LockSupport.parkNanos(waitTime / 4)
+        }
+        
+        // 增加等待时间
+        waitTime += 1000
+    }
+    
+    override fun waitForSequenceWithTimeout(sequence: Long, timeoutNanos: Long) {
+        val endTime = System.nanoTime() + timeoutNanos
+        var waitTime = 0L
+        
+        while (System.nanoTime() < endTime) {
+            // 根据等待时间选择不同策略
+            if (waitTime < yieldThreshold) {
+                // 短期等待：忙等待
+            } else if (waitTime < sleepThreshold) {
+                // 中等等待：让出CPU
+                Thread.yield()
+            } else if (waitTime < parkThreshold) {
+                // 较长等待：短时间休眠
+                val remainingNanos = endTime - System.nanoTime()
+                if (remainingNanos > 0) {
+                    try {
+                        TimeUnit.NANOSECONDS.sleep(Math.min(remainingNanos / 2, 1000000))
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw RuntimeException(e)
+                    }
+                }
+            } else {
+                // 长时间等待：阻塞线程
+                val remainingNanos = endTime - System.nanoTime()
+                if (remainingNanos > 0) {
+                    LockSupport.parkNanos(remainingNanos / 4)
+                }
+            }
+            
+            // 增加等待时间
+            waitTime += 1000
+        }
     }
 } 
