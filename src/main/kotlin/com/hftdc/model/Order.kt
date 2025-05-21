@@ -56,12 +56,13 @@ data class Order(
     val side: OrderSide,              // 订单方向
     val type: OrderType,              // 订单类型
     val timeInForce: TimeInForce,     // 有效期类型
-    val timestamp: Long,              // 创建时间戳
     val status: OrderStatus,          // 订单状态
     val filledQuantity: Long = 0,     // 已成交数量
     val remainingQuantity: Long = quantity, // 剩余数量
     val avgExecutionPrice: Long? = null, // 平均成交价格
-    val lastUpdated: Long = timestamp // 最后更新时间
+    val timestamp: Long,              // 创建时间戳
+    val lastUpdated: Long = timestamp, // 最后更新时间
+    val isPlaceholder: Boolean = false // 是否是占位订单（用于恢复）
 ) : SerializableMessage {
     
     /**

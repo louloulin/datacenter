@@ -1,8 +1,11 @@
 package com.hftdc.model
 
 import kotlinx.serialization.Serializable
+import mu.KotlinLogging
 import java.time.Instant
 import java.util.*
+
+private val logger = KotlinLogging.logger {}
 
 /**
  * 订单簿实体 - 管理单个交易品种的所有订单
@@ -341,12 +344,94 @@ class OrderBook(val instrumentId: String) {
     /**
      * 获取未成交订单数量
      */
-    fun getPendingOrdersCount(): Int = buyOrders.values.sumOf { it.size } + sellOrders.values.sumOf { it.size }
+    fun getPendingOrdersCount(): Int {
+        return ordersById.values.count { 
+            it.status == OrderStatus.NEW || it.status == OrderStatus.PARTIALLY_FILLED 
+        }
+    }
     
     /**
      * 获取最后更新时间
      */
     fun getLastUpdated(): Long = lastUpdated
+    
+    /**
+     * 从快照恢复订单簿状态
+     */
+    fun restoreFromSnapshot(snapshot: OrderBookSnapshot) {
+        // 确保快照与当前订单簿匹配
+        if (snapshot.instrumentId != this.instrumentId) {
+            throw IllegalArgumentException("快照品种ID ${snapshot.instrumentId} 与订单簿品种ID ${this.instrumentId} 不匹配")
+        }
+        
+        // 清空当前订单簿
+        buyOrders.clear()
+        sellOrders.clear()
+        ordersById.clear()
+        
+        // 恢复买单价格层级
+        snapshot.bids.forEach { level ->
+            val placeholderId = generatePlaceholderId("BID", level.price)
+            val placeholderOrder = Order(
+                id = placeholderId,
+                userId = 0, // 系统用户ID
+                instrumentId = instrumentId,
+                price = level.price,
+                quantity = level.quantity,
+                remainingQuantity = level.quantity,
+                side = OrderSide.BUY,
+                status = OrderStatus.NEW,
+                type = OrderType.LIMIT,
+                timeInForce = TimeInForce.GTC,
+                timestamp = snapshot.timestamp,
+                lastUpdated = snapshot.timestamp,
+                isPlaceholder = true // 标记为占位订单
+            )
+            
+            // 将占位订单添加到订单簿
+            val orders = buyOrders.getOrPut(level.price) { mutableListOf() }
+            orders.add(placeholderOrder)
+            ordersById[placeholderId] = placeholderOrder
+        }
+        
+        // 恢复卖单价格层级
+        snapshot.asks.forEach { level ->
+            val placeholderId = generatePlaceholderId("ASK", level.price)
+            val placeholderOrder = Order(
+                id = placeholderId,
+                userId = 0, // 系统用户ID
+                instrumentId = instrumentId,
+                price = level.price,
+                quantity = level.quantity,
+                remainingQuantity = level.quantity,
+                side = OrderSide.SELL,
+                status = OrderStatus.NEW,
+                type = OrderType.LIMIT,
+                timeInForce = TimeInForce.GTC,
+                timestamp = snapshot.timestamp,
+                lastUpdated = snapshot.timestamp,
+                isPlaceholder = true // 标记为占位订单
+            )
+            
+            // 将占位订单添加到订单簿
+            val orders = sellOrders.getOrPut(level.price) { mutableListOf() }
+            orders.add(placeholderOrder)
+            ordersById[placeholderId] = placeholderOrder
+        }
+        
+        // 恢复时间戳
+        lastUpdated = snapshot.timestamp
+        
+        logger.info { "从快照恢复订单簿 $instrumentId, 时间戳: $lastUpdated, 买单层级: ${snapshot.bids.size}, 卖单层级: ${snapshot.asks.size}" }
+    }
+    
+    /**
+     * 生成占位订单ID
+     */
+    private fun generatePlaceholderId(prefix: String, price: Long): Long {
+        // 通过前缀、价格和时间戳生成一个唯一标识符
+        return "${prefix}_${price}_${System.nanoTime()}".hashCode().toLong()
+    }
 }
 
 /**
