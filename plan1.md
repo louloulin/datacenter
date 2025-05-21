@@ -90,10 +90,10 @@ Akka Actor模型将用于构建系统的各个组件，实现消息驱动的异�
 
 ### 2.3 关键组件
 
-#### 2.3.1 订单匹配引擎
+#### 2.3.1 订单匹配引擎 ✅
 
 - 基于Disruptor实现高性能的订单匹配
-- 支持多种订单类型：市价单、限价单、IOC单、FOK单等
+- 支持多种订单类型：市价单、限价单、IOC单、FOK单、POST_ONLY单
 - 采用价格优先、时间优先的匹配算法
 
 #### 2.3.2 风控系统 ✅
@@ -182,7 +182,7 @@ class OrderProcessorActor : AbstractActor() {
 }
 ```
 
-### 3.3 订单簿实现
+### 3.3 订单簿实现 ✅
 
 ```kotlin
 // 使用Adaptive Radix Trees实现高效订单簿
@@ -191,6 +191,18 @@ class OrderBook(val instrumentId: String) {
     private val sellOrders = TreeMap<Long, MutableList<Order>>() // 价格正序，卖单从低到高
     
     fun addOrder(order: Order): List<Trade> {
+        // 根据订单类型处理
+        if (order.type == OrderType.MARKET) {
+            return matchMarketOrder(order)
+        } else if (order.type == OrderType.POST_ONLY) {
+            return handlePostOnlyOrder(order)
+        } else if (order.type == OrderType.FOK || order.timeInForce == TimeInForce.FOK) {
+            return handleFokOrder(order)
+        } else if (order.type == OrderType.IOC || order.timeInForce == TimeInForce.IOC) {
+            return handleIocOrder(order)
+        }
+        
+        // 限价单匹配
         return when(order.side) {
             OrderSide.BUY -> matchBuyOrder(order)
             OrderSide.SELL -> matchSellOrder(order)
@@ -201,12 +213,29 @@ class OrderBook(val instrumentId: String) {
         // 取消订单实现
     }
     
+    // 支持多种订单类型的具体实现
     private fun matchBuyOrder(order: Order): List<Trade> {
         // 买单匹配逻辑
     }
     
     private fun matchSellOrder(order: Order): List<Trade> {
         // 卖单匹配逻辑
+    }
+    
+    private fun matchMarketOrder(order: Order): List<Trade> {
+        // 市价单匹配逻辑
+    }
+    
+    private fun handlePostOnlyOrder(order: Order): List<Trade> {
+        // POST_ONLY订单处理逻辑
+    }
+    
+    private fun handleFokOrder(order: Order): List<Trade> {
+        // FOK订单处理逻辑
+    }
+    
+    private fun handleIocOrder(order: Order): List<Trade> {
+        // IOC订单处理逻辑
     }
 }
 ```
@@ -257,9 +286,9 @@ fun restoreState(events: List<Event>): OrderBook {
 ### 4.2 阶段二：高级功能与集成 (6周)
 
 4. **第9-10周**：高级功能开发
-   - 增强风控系统
-   - 市场数据处理
-   - 完善订单类型支持
+   - 增强风控系统 ✅
+   - 市场数据处理 ✅
+   - 完善订单类型支持 ✅
 
 5. **第11-14周**：系统集成与测试
    - 组件集成

@@ -39,7 +39,7 @@ class FileJournalService(
     
     private val eventBuffer = mutableListOf<JournalEvent>()
     private val eventIdCounter = AtomicLong(0)
-    private val instrumentSnapshots = ConcurrentHashMap<String, MutableList<InstrumentSnapshot>>()
+    private val instrumentSnapshots = ConcurrentHashMap<String, MutableList<JournalSnapshot>>()
     
     private val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(1)
     
@@ -91,7 +91,7 @@ class FileJournalService(
                 instrumentDir.listFiles { file -> file.isFile && file.name.endsWith(".json") }?.forEach { snapshotFile ->
                     try {
                         val content = snapshotFile.readText()
-                        val snapshot = json.decodeFromString<InstrumentSnapshot>(content)
+                        val snapshot = json.decodeFromString<JournalSnapshot>(content)
                         
                         instrumentSnapshots.computeIfAbsent(instrumentId) { mutableListOf() }.add(snapshot)
                         
@@ -192,16 +192,16 @@ class FileJournalService(
         val snapshotId = "snapshot-${System.nanoTime()}"
         val timestamp = Instant.now().toEpochMilli()
         
-        val instrumentSnapshot = InstrumentSnapshot(
+        val journalSnapshot = JournalSnapshot(
             id = snapshotId,
-            instrumentId = instrumentId,
             timestamp = timestamp,
+            instrumentId = instrumentId,
             snapshot = snapshot
         )
         
         try {
             // 更新内存中的快照
-            instrumentSnapshots.computeIfAbsent(instrumentId) { mutableListOf() }.add(instrumentSnapshot)
+            instrumentSnapshots.computeIfAbsent(instrumentId) { mutableListOf() }.add(journalSnapshot)
             
             // 写入快照到文件
             val dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(timestamp), ZoneId.systemDefault())
@@ -213,7 +213,7 @@ class FileJournalService(
             val filename = "${snapshotId}.json"
             val file = File(dir, filename)
             
-            val jsonContent = json.encodeToString(instrumentSnapshot)
+            val jsonContent = json.encodeToString(journalSnapshot)
             file.writeText(jsonContent)
             
             // 记录快照创建事件
@@ -238,7 +238,7 @@ class FileJournalService(
     /**
      * 获取最新快照
      */
-    override fun getLatestSnapshot(instrumentId: String): InstrumentSnapshot? {
+    override fun getLatestSnapshot(instrumentId: String): JournalSnapshot? {
         return instrumentSnapshots[instrumentId]?.maxByOrNull { it.timestamp }
     }
     
@@ -312,7 +312,7 @@ class FileJournalService(
     }
     
     /**
-     * Or return all instruments with snapshots
+     * Get all instruments with snapshots
      */
     override fun getInstrumentsWithSnapshots(): Set<String> {
         return instrumentSnapshots.keys

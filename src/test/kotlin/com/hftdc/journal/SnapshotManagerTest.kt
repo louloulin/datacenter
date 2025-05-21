@@ -78,24 +78,24 @@ class SnapshotManagerTest {
         val ethSnapshotId = snapshotManager.createSnapshotFor("ETH-USDT")
         
         // 验证 - 检查是否成功创建快照
-        assertNotNull(btcSnapshotId, "BTC-USDT快照应该成功创建")
-        assertNotNull(ethSnapshotId, "ETH-USDT快照应该成功创建")
+        assertNotNull(btcSnapshotId, "BTC-USDT snapshot should be created successfully")
+        assertNotNull(ethSnapshotId, "ETH-USDT snapshot should be created successfully")
         
         // 检查快照计数器
-        assertEquals(2, snapshotManager.getSnapshotCount(), "快照计数器应该记录2个快照")
+        assertEquals(2, snapshotManager.getSnapshotCount(), "Snapshot counter should record 2 snapshots")
         
         // 验证快照内容
         val btcSnapshot = journalService.getLatestSnapshot("BTC-USDT")
         val ethSnapshot = journalService.getLatestSnapshot("ETH-USDT")
         
-        assertNotNull(btcSnapshot, "BTC-USDT快照应该存在")
-        assertNotNull(ethSnapshot, "ETH-USDT快照应该存在")
+        assertNotNull(btcSnapshot, "BTC-USDT snapshot should exist")
+        assertNotNull(ethSnapshot, "ETH-USDT snapshot should exist")
         
-        assertEquals(1, btcSnapshot?.snapshot?.bids?.size, "BTC-USDT快照应该包含一个买单")
-        assertEquals(1, ethSnapshot?.snapshot?.asks?.size, "ETH-USDT快照应该包含一个卖单")
+        assertEquals(1, btcSnapshot?.snapshot?.bids?.size, "BTC-USDT snapshot should contain one buy order")
+        assertEquals(1, ethSnapshot?.snapshot?.asks?.size, "ETH-USDT snapshot should contain one sell order")
         
-        assertEquals(50000L, btcSnapshot?.snapshot?.bids?.get(0)?.price, "BTC-USDT买单价格应该是50000")
-        assertEquals(3000L, ethSnapshot?.snapshot?.asks?.get(0)?.price, "ETH-USDT卖单价格应该是3000")
+        assertEquals(50000L, btcSnapshot?.snapshot?.bids?.get(0)?.price, "BTC-USDT buy order price should be 50000")
+        assertEquals(3000L, ethSnapshot?.snapshot?.asks?.get(0)?.price, "ETH-USDT sell order price should be 3000")
     }
     
     @Test
@@ -133,14 +133,14 @@ class SnapshotManagerTest {
         // 验证 - 检查是否生成了快照
         val ltcSnapshot = journalService.getLatestSnapshot("LTC-USDT")
         
-        assertNotNull(ltcSnapshot, "LTC-USDT快照应该存在")
-        assertEquals(1, ltcSnapshot?.snapshot?.bids?.size, "LTC-USDT快照应该包含一个买单")
-        assertEquals(150L, ltcSnapshot?.snapshot?.bids?.get(0)?.price, "LTC-USDT买单价格应该是150")
+        assertNotNull(ltcSnapshot, "LTC-USDT snapshot should exist")
+        assertEquals(1, ltcSnapshot?.snapshot?.bids?.size, "LTC-USDT snapshot should contain one buy order")
+        assertEquals(150L, ltcSnapshot?.snapshot?.bids?.get(0)?.price, "LTC-USDT buy order price should be 150")
         
         // 检查快照计数器
-        assertTrue(snapshotManager.getSnapshotCount() >= 1, "应该至少生成一个快照")
+        assertTrue(snapshotManager.getSnapshotCount() >= 1, "Should generate at least one snapshot")
         
-        println("生成了 ${snapshotManager.getSnapshotCount()} 个快照")
+        println("Generated ${snapshotManager.getSnapshotCount()} snapshots")
     }
     
     @Test
@@ -190,18 +190,18 @@ class SnapshotManagerTest {
         snapshotManager.createSnapshots()
         
         // 验证 - 检查是否为所有品种创建了快照
-        assertEquals(instruments.size.toLong(), snapshotManager.getSnapshotCount(), "应该为每个品种创建一个快照")
+        assertEquals(instruments.size.toLong(), snapshotManager.getSnapshotCount(), "Should create one snapshot for each instrument")
         
         // 验证每个品种的快照内容
         instruments.forEachIndexed { index, instrumentId ->
             val snapshot = journalService.getLatestSnapshot(instrumentId)
             
-            assertNotNull(snapshot, "$instrumentId快照应该存在")
-            assertEquals(1, snapshot?.snapshot?.bids?.size, "$instrumentId快照应该包含一个买单")
-            assertEquals(1, snapshot?.snapshot?.asks?.size, "$instrumentId快照应该包含一个卖单")
+            assertNotNull(snapshot, "$instrumentId snapshot should exist")
+            assertEquals(1, snapshot?.snapshot?.bids?.size, "$instrumentId snapshot should contain one buy order")
+            assertEquals(1, snapshot?.snapshot?.asks?.size, "$instrumentId snapshot should contain one sell order")
             
-            assertEquals((1000 * (index + 1)).toLong(), snapshot?.snapshot?.bids?.get(0)?.price, "$instrumentId买单价格检查")
-            assertEquals((1100 * (index + 1)).toLong(), snapshot?.snapshot?.asks?.get(0)?.price, "$instrumentId卖单价格检查")
+            assertEquals((1000 * (index + 1)).toLong(), snapshot?.snapshot?.bids?.get(0)?.price, "$instrumentId buy order price check")
+            assertEquals((1100 * (index + 1)).toLong(), snapshot?.snapshot?.asks?.get(0)?.price, "$instrumentId sell order price check")
         }
     }
 } 

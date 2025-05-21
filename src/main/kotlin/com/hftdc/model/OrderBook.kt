@@ -32,6 +32,21 @@ class OrderBook(val instrumentId: String) {
             return matchMarketOrder(order)
         }
         
+        // POST_ONLY 订单特殊处理
+        if (order.type == OrderType.POST_ONLY) {
+            return handlePostOnlyOrder(order)
+        }
+        
+        // FOK 订单特殊处理
+        if (order.type == OrderType.FOK || order.timeInForce == TimeInForce.FOK) {
+            return handleFokOrder(order)
+        }
+        
+        // IOC 订单特殊处理
+        if (order.type == OrderType.IOC || order.timeInForce == TimeInForce.IOC) {
+            return handleIocOrder(order)
+        }
+        
         // 限价单先尝试撮合
         val trades = when (order.side) {
             OrderSide.BUY -> matchBuyOrder(order)
@@ -276,13 +291,25 @@ class OrderBook(val instrumentId: String) {
         return when (order.side) {
             OrderSide.BUY -> {
                 // 为市价买单找到最高的可接受价格
-                val highestPrice = sellOrders.firstKey()?.let { it * 2 } ?: return emptyList()
-                matchBuyOrder(order.copy(price = highestPrice))
+                if (sellOrders.isEmpty()) {
+                    // 没有卖单，无法成交
+                    logger.debug { "市价买单 ${order.id} 没有可匹配的卖单" }
+                    emptyList()
+                } else {
+                    val highestPrice = sellOrders.firstKey() * 2
+                    matchBuyOrder(order.copy(price = highestPrice))
+                }
             }
             OrderSide.SELL -> {
                 // 为市价卖单找到最低的可接受价格
-                val lowestPrice = buyOrders.firstKey()?.let { it / 2 } ?: return emptyList()
-                matchSellOrder(order.copy(price = lowestPrice))
+                if (buyOrders.isEmpty()) {
+                    // 没有买单，无法成交
+                    logger.debug { "市价卖单 ${order.id} 没有可匹配的买单" }
+                    emptyList()
+                } else {
+                    val lowestPrice = buyOrders.firstKey() / 2
+                    matchSellOrder(order.copy(price = lowestPrice))
+                }
             }
         }
     }
@@ -442,6 +469,148 @@ class OrderBook(val instrumentId: String) {
     private fun generatePlaceholderId(prefix: String, price: Long): Long {
         // 通过前缀、价格和时间戳生成一个唯一标识符
         return "${prefix}_${price}_${System.nanoTime()}".hashCode().toLong()
+    }
+    
+    /**
+     * 处理POST_ONLY订单 - 只有在不会立即成交的情况下才加入订单簿
+     */
+    private fun handlePostOnlyOrder(order: Order): List<Trade> {
+        // 检查订单是否会立即成交
+        val wouldExecute = when (order.side) {
+            OrderSide.BUY -> {
+                if (sellOrders.isEmpty()) {
+                    false // 没有卖单，不会立即成交
+                } else {
+                    val lowestAsk = sellOrders.firstKey()
+                    order.price != null && order.price >= lowestAsk
+                }
+            }
+            OrderSide.SELL -> {
+                if (buyOrders.isEmpty()) {
+                    false // 没有买单，不会立即成交
+                } else {
+                    val highestBid = buyOrders.firstKey()
+                    order.price != null && order.price <= highestBid
+                }
+            }
+        }
+        
+        // 如果会立即成交，则拒绝此订单（返回空交易列表）
+        if (wouldExecute) {
+            // 更新订单状态为已取消，并添加到缓存
+            val rejectedOrder = order.withUpdatedStatus(OrderStatus.REJECTED)
+            ordersById[order.id] = rejectedOrder
+            logger.debug { "POST_ONLY订单 ${order.id} 会立即成交，已拒绝" }
+            return emptyList()
+        }
+        
+        // 否则，将订单添加到订单簿
+        addToOrderBook(order)
+        logger.debug { "POST_ONLY订单 ${order.id} 已添加到订单簿" }
+        return emptyList()
+    }
+    
+    /**
+     * 处理FOK（Fill or Kill）订单 - 必须全部成交或全部取消
+     */
+    private fun handleFokOrder(order: Order): List<Trade> {
+        // 检查订单是否可以完全成交
+        val availableQuantity = getAvailableQuantityFor(order)
+        
+        // 如果可用数量小于订单数量，则取消订单
+        if (availableQuantity < order.quantity) {
+            // 更新订单状态为已取消，并添加到缓存
+            val canceledOrder = order.withUpdatedStatus(OrderStatus.CANCELED)
+            ordersById[order.id] = canceledOrder
+            logger.debug { "FOK订单 ${order.id} 无法完全成交，已取消" }
+            return emptyList()
+        }
+        
+        // 否则，执行正常撮合
+        val trades = when (order.side) {
+            OrderSide.BUY -> matchBuyOrder(order)
+            OrderSide.SELL -> matchSellOrder(order)
+        }
+        
+        // 验证是否完全成交
+        val isFullyFilled = trades.sumOf { it.quantity } == order.quantity
+        
+        // 如果没有完全成交（理论上不应该发生），记录错误
+        if (!isFullyFilled) {
+            logger.error { "FOK订单 ${order.id} 预计可以完全成交，但实际未完全成交" }
+        }
+        
+        return trades
+    }
+    
+    /**
+     * 获取订单可成交的数量
+     */
+    private fun getAvailableQuantityFor(order: Order): Long {
+        var availableQty = 0L
+        val price = order.price ?: return 0L
+        
+        when (order.side) {
+            OrderSide.BUY -> {
+                // 对于买单，检查所有价格小于等于买单价格的卖单
+                for ((sellPrice, sellOrders) in sellOrders) {
+                    if (sellPrice > price) break
+                    
+                    // 累加可成交数量
+                    for (sellOrder in sellOrders) {
+                        // 跳过同一用户的订单
+                        if (sellOrder.userId == order.userId) continue
+                        availableQty += sellOrder.remainingQuantity
+                    }
+                }
+            }
+            OrderSide.SELL -> {
+                // 对于卖单，检查所有价格大于等于卖单价格的买单
+                for ((buyPrice, buyOrders) in buyOrders) {
+                    if (buyPrice < price) break
+                    
+                    // 累加可成交数量
+                    for (buyOrder in buyOrders) {
+                        // 跳过同一用户的订单
+                        if (buyOrder.userId == order.userId) continue
+                        availableQty += buyOrder.remainingQuantity
+                    }
+                }
+            }
+        }
+        
+        return availableQty
+    }
+    
+    /**
+     * 处理IOC（Immediate or Cancel）订单 - 立即成交可成交部分，取消剩余部分
+     */
+    private fun handleIocOrder(order: Order): List<Trade> {
+        // 执行正常撮合
+        val trades = when (order.side) {
+            OrderSide.BUY -> matchBuyOrder(order)
+            OrderSide.SELL -> matchSellOrder(order)
+        }
+        
+        // 获取更新后的订单
+        val updatedOrder = ordersById[order.id]
+        
+        // 如果有剩余数量，则取消
+        if (updatedOrder != null && updatedOrder.remainingQuantity > 0) {
+            val canceledOrder = updatedOrder.withUpdatedStatus(OrderStatus.CANCELED)
+            ordersById[order.id] = canceledOrder
+            logger.debug { "IOC订单 ${order.id} 部分成交，剩余部分已取消" }
+        } else if (trades.isEmpty()) {
+            // 如果没有成交，标记为取消
+            val canceledOrder = order.withUpdatedStatus(OrderStatus.CANCELED)
+            ordersById[order.id] = canceledOrder
+            logger.debug { "IOC订单 ${order.id} 未成交，已取消" }
+        } else {
+            logger.debug { "IOC订单 ${order.id} 已完全成交" }
+        }
+        
+        // 返回成交记录
+        return trades
     }
 }
 

@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class InMemoryJournalService : JournalService {
     private val events = mutableListOf<JournalEvent>()
-    private val snapshots = ConcurrentHashMap<String, MutableList<InstrumentSnapshot>>()
+    private val snapshots = ConcurrentHashMap<String, MutableList<JournalSnapshot>>()
     private val eventIdCounter = AtomicLong(0)
     
     override fun journal(event: JournalEvent) {
@@ -19,18 +19,18 @@ class InMemoryJournalService : JournalService {
     
     override fun saveSnapshot(instrumentId: String, snapshot: OrderBookSnapshot): String {
         val snapshotId = "snapshot-${System.nanoTime()}"
-        val instrumentSnapshot = InstrumentSnapshot(
+        val journalSnapshot = JournalSnapshot(
             id = snapshotId,
-            instrumentId = instrumentId,
             timestamp = Instant.now().toEpochMilli(),
+            instrumentId = instrumentId,
             snapshot = snapshot
         )
         
-        snapshots.computeIfAbsent(instrumentId) { mutableListOf() }.add(instrumentSnapshot)
+        snapshots.computeIfAbsent(instrumentId) { mutableListOf() }.add(journalSnapshot)
         return snapshotId
     }
     
-    override fun getLatestSnapshot(instrumentId: String): InstrumentSnapshot? {
+    override fun getLatestSnapshot(instrumentId: String): JournalSnapshot? {
         return snapshots[instrumentId]?.maxByOrNull { it.timestamp }
     }
     
@@ -56,7 +56,7 @@ class InMemoryJournalService : JournalService {
         return snapshots.keys
     }
     
-    fun shutdown() {
+    override fun shutdown() {
         events.clear()
         snapshots.clear()
     }
