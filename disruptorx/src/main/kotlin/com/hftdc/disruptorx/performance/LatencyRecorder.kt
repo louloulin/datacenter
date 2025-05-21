@@ -132,4 +132,12 @@ class LatencyRecorder(
             1.0 // 输出百分比刻度
         )
     }
+    
+    /**
+     * 获取原始直方图对象
+     * @return 内部直方图对象
+     */
+    fun getHistogram(): Histogram {
+        return histogram.copy()
+    }
 } 
