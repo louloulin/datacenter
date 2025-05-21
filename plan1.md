@@ -18,7 +18,7 @@
   - Chronicle Wire: 高性能序列化
   - Adaptive Radix Trees: 高效数据结构
   - PostgreSQL/TimescaleDB: 时序数据存储
-  - Prometheus/Grafana: 监控与指标收集
+  - Prometheus/Grafana: 监控与指标收集 ✅
 
 ## 2. 系统架构
 
@@ -303,7 +303,7 @@ fun restoreState(events: List<Event>): OrderBook {
    - 延迟优化
 
 7. **第17-18周**：生产环境部署
-   - 监控系统配置
+   - 监控系统配置 ✅
    - 生产环境配置
    - 部署与上线
 

@@ -134,7 +134,7 @@ class MetricsRegistryTest {
             .labels(instrumentId, type)
         
         // Count should be 3
-        assertEquals(3.0, histogram.get().count, 0.001)
+        assertEquals(3.0, histogram.get().sampleCount, 0.001)
         
         // Sum should be the sum of all observations
         assertEquals(0.0125, histogram.get().sum, 0.0001)

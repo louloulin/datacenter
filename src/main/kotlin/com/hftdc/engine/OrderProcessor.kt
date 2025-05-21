@@ -172,7 +172,7 @@ class JournalHandler(
         }
         
         // 周期性清理过期的指标记录
-        if (sequence % 1000 == 0) {
+        if (sequence % 1000L == 0L) {
             metricsHandler?.cleanupStaleRecords()
         }
         

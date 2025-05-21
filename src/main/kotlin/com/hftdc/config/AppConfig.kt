@@ -13,7 +13,8 @@ data class AppConfig(
     val db: DbConfig,
     val engine: EngineConfig,
     val recovery: RecoveryConfig,
-    val api: ApiConfig
+    val api: ApiConfig,
+    val monitoring: MonitoringConfig
 ) {
     companion object {
         /**
@@ -27,7 +28,8 @@ data class AppConfig(
                 db = DbConfig.fromConfig(config.getConfig("db")),
                 engine = EngineConfig.fromConfig(config.getConfig("engine")),
                 recovery = RecoveryConfig.fromConfig(config.getConfig("recovery")),
-                api = ApiConfig.fromConfig(config.getConfig("api"))
+                api = ApiConfig.fromConfig(config.getConfig("api")),
+                monitoring = MonitoringConfig.fromConfig(config.getConfig("monitoring"))
             )
         }
 
@@ -152,6 +154,23 @@ data class RecoveryConfig(
             includeEventsBeforeSnapshot = config.getBoolean("include-events-before-snapshot"),
             eventsBeforeSnapshotTimeWindowMs = config.getLong("events-before-snapshot-time-window-ms"),
             autoStartSnapshots = config.getBoolean("auto-start-snapshots")
+        )
+    }
+}
+
+/**
+ * 监控配置
+ */
+data class MonitoringConfig(
+    val prometheusEnabled: Boolean,
+    val prometheusPort: Int,
+    val metricsIntervalSeconds: Int
+) {
+    companion object {
+        fun fromConfig(config: Config): MonitoringConfig = MonitoringConfig(
+            prometheusEnabled = config.getBoolean("prometheus-enabled"),
+            prometheusPort = config.getInt("prometheus-port"),
+            metricsIntervalSeconds = config.getInt("metrics-interval-seconds")
         )
     }
 } 

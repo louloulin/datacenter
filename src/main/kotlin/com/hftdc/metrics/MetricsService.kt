@@ -54,7 +54,7 @@ class MetricsService(
         // 如果启用了Prometheus，启动HTTP服务器暴露指标
         if (config.enablePrometheus) {
             try {
-                metricsServer = HTTPServer(config.prometheusPort, metricsRegistry.getRegistry())
+                metricsServer = HTTPServer(config.prometheusPort, true) // 使用默认registry
                 logger.info { "Prometheus metrics server started on port ${config.prometheusPort}" }
             } catch (e: Exception) {
                 logger.error(e) { "Failed to start Prometheus metrics server" }
