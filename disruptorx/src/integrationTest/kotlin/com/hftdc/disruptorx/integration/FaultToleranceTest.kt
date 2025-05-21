@@ -173,6 +173,210 @@ class FaultToleranceTest {
         publishThread.join(5000)
     }
     
+    @Test
+    @Timeout(120)
+    fun `should handle network partition and recovery`() = runBlocking {
+        // 创建工作流
+        val workflowId = "network-partition-workflow"
+        nodes.forEach { (nodeId, node) ->
+            val workflow = createTestWorkflow(workflowId, nodeId)
+            node.workflowManager.register(workflow)
+            node.workflowManager.start(workflowId)
+        }
+        
+        // 等待工作流启动
+        delay(2000)
+        
+        // 准备事件接收机制
+        val inputTopic = "partition-input-events"
+        val outputTopic = "partition-output-events"
+        val totalEvents = 100
+        val allEventsLatch = CountDownLatch(totalEvents)
+        
+        // 重置计数器
+        nodes.keys.forEach { nodeId ->
+            receivedEvents[nodeId]?.set(0)
+            processedEvents[nodeId]?.set(0)
+        }
+        
+        // 在所有节点上订阅输出主题
+        nodes.forEach { (nodeId, node) ->
+            node.eventBus.subscribe(outputTopic) { event ->
+                println("节点 $nodeId 收到处理后的事件: $event")
+                processedEvents[nodeId]?.incrementAndGet()
+                allEventsLatch.countDown()
+            }
+        }
+        
+        // 选择两个节点形成一边的网络分区
+        val partitionGroup1 = nodes.keys.filter { it != initialLeader }.take(1)
+        val partitionGroup2 = nodes.keys.filter { !partitionGroup1.contains(it) }
+        
+        println("网络分区组1: $partitionGroup1")
+        println("网络分区组2: $partitionGroup2")
+        
+        // 使用独立线程发布事件
+        val publishThread = Thread {
+            try {
+                runBlocking {
+                    // 从组1中选择一个节点作为发布者
+                    val publisherNodeId = partitionGroup1.first()
+                    val publisherNode = nodes[publisherNodeId]!!
+                    
+                    for (i in 1..totalEvents) {
+                        // 模拟网络分区
+                        if (i == 30) {
+                            println("在发布30个事件后，创建网络分区")
+                            
+                            // 断开两个分区组之间的连接
+                            for (nodeId1 in partitionGroup1) {
+                                for (nodeId2 in partitionGroup2) {
+                                    // 注入节点间的网络断开
+                                    println("断开节点 $nodeId1 和 $nodeId2 之间的连接")
+                                    faultInjector.disconnectNetwork(nodeId1, 10000)
+                                }
+                            }
+                            
+                            delay(2000) // 等待分区生效
+                        }
+                        
+                        // 在分区期间继续发布事件
+                        if (i == 60) {
+                            println("在发布60个事件后，修复网络分区")
+                            // 不需要显式操作，faultInjector会在指定时间后自动恢复连接
+                            delay(2000) // 等待连接恢复
+                        }
+                        
+                        // 发布事件
+                        val event = "PartitionEvent-$i"
+                        println("发布事件: $event 到节点 $publisherNodeId")
+                        publisherNode.eventBus.publish(event, inputTopic)
+                        
+                        // 适当延迟
+                        delay(50)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        publishThread.start()
+        
+        // 等待所有事件处理完成
+        val allEventsProcessed = allEventsLatch.await(90, TimeUnit.SECONDS)
+        
+        // 验证结果
+        assertTrue(allEventsProcessed, "所有事件应在超时前处理完成")
+        
+        // 打印统计信息
+        println("=== 网络分区测试事件处理统计 ===")
+        processedEvents.forEach { (nodeId, count) ->
+            println("节点 $nodeId 处理的事件数: ${count.get()}")
+        }
+        
+        // 验证所有事件都被处理
+        val totalProcessed = processedEvents.values.sumOf { it.get() }
+        assertEquals(totalEvents, totalProcessed, "应处理所有发布的事件")
+        
+        // 等待发布线程完成
+        publishThread.join(5000)
+    }
+    
+    @Test
+    @Timeout(120)
+    fun `should handle packet loss and ensure reliable delivery`() = runBlocking {
+        // 创建工作流
+        val workflowId = "message-loss-workflow"
+        nodes.forEach { (nodeId, node) ->
+            val workflow = createTestWorkflow(workflowId, nodeId)
+            node.workflowManager.register(workflow)
+            node.workflowManager.start(workflowId)
+        }
+        
+        // 等待工作流启动
+        delay(2000)
+        
+        // 准备事件接收机制
+        val inputTopic = "loss-input-events"
+        val outputTopic = "loss-output-events"
+        val totalEvents = 80
+        val allEventsLatch = CountDownLatch(totalEvents)
+        
+        // 重置计数器
+        nodes.keys.forEach { nodeId ->
+            receivedEvents[nodeId]?.set(0)
+            processedEvents[nodeId]?.set(0)
+        }
+        
+        // 在所有节点上订阅输出主题
+        nodes.forEach { (nodeId, node) ->
+            node.eventBus.subscribe(outputTopic) { event ->
+                println("节点 $nodeId 收到处理后的事件: $event")
+                processedEvents[nodeId]?.incrementAndGet()
+                allEventsLatch.countDown()
+            }
+        }
+        
+        // 选择非领导节点作为消息发布节点
+        val publisherNodeId = nodes.keys.first { it != initialLeader }
+        val publisherNode = nodes[publisherNodeId]!!
+        
+        // 记录已发布的事件ID，用于验证所有事件都被处理
+        val publishedEventIds = ConcurrentHashMap.newKeySet<Int>()
+        
+        // 使用独立线程发布事件
+        val publishThread = Thread {
+            try {
+                runBlocking {
+                    for (i in 1..totalEvents) {
+                        // 在发布20个事件后，注入消息丢失故障
+                        if (i == 20) {
+                            println("在发布20个事件后，注入高丢包率(40%)到领导节点")
+                            faultInjector.injectMessageLoss(initialLeader, 0.4, 10000)
+                        }
+                        
+                        // 在发布50个事件后，注入消息丢失故障到发布者节点
+                        if (i == 50) {
+                            println("在发布50个事件后，注入中等丢包率(20%)到发布者节点")
+                            faultInjector.injectMessageLoss(publisherNodeId, 0.2, 10000)
+                        }
+                        
+                        // 发布事件
+                        val event = "LossEvent-$i"
+                        println("发布事件: $event 到节点 $publisherNodeId")
+                        publisherNode.eventBus.publish(event, inputTopic)
+                        publishedEventIds.add(i)
+                        
+                        // 适当延迟
+                        delay(100)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        publishThread.start()
+        
+        // 等待所有事件处理完成
+        val allEventsProcessed = allEventsLatch.await(120, TimeUnit.SECONDS)
+        
+        // 验证结果
+        assertTrue(allEventsProcessed, "所有事件应在超时前处理完成，即使存在消息丢失")
+        
+        // 打印统计信息
+        println("=== 消息丢失测试事件处理统计 ===")
+        processedEvents.forEach { (nodeId, count) ->
+            println("节点 $nodeId 处理的事件数: ${count.get()}")
+        }
+        
+        // 验证消息总数
+        val totalProcessed = processedEvents.values.sumOf { it.get() }
+        assertEquals(totalEvents, totalProcessed, "即使存在网络丢包，所有发布的事件都应被可靠处理")
+        
+        // 等待发布线程完成
+        publishThread.join(5000)
+    }
+    
     /**
      * 创建测试节点
      */
