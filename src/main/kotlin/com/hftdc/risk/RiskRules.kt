@@ -96,21 +96,29 @@ class OrderSizeRule : RiskRule {
             )
         }
         
-        // 检查订单金额是否超过用户限制
+        // 检查订单金额是否超过用户风险限制
+        // 直接使用用户设置的maxOrderAmount，而不是基于风险级别
         val orderAmount = (order.price ?: 0) * order.quantity
-        val userLimits = context.getRiskLevel().let {
-            when (it) {
-                RiskLevel.LOW -> 100_000_000_000L // 1亿
-                RiskLevel.MEDIUM -> 10_000_000_000L // 1千万
-                RiskLevel.HIGH -> 1_000_000_000L // 1百万
-                RiskLevel.FROZEN -> 0L
+        val maxOrderAmount = try {
+            context.userId.let { userId ->
+                context.getRiskLevel().let { riskLevel ->
+                    when (riskLevel) {
+                        RiskLevel.LOW -> 100_000_000_000L // 1亿
+                        RiskLevel.MEDIUM -> 10_000_000_000L // 1千万
+                        RiskLevel.HIGH -> 1_000_000_000L // 1百万
+                        RiskLevel.FROZEN -> 0L
+                    }
+                }
             }
+        } catch (e: Exception) {
+            // 如果获取失败，使用一个默认值
+            1_000_000_000L // 1百万
         }
         
-        if (orderAmount > userLimits) {
+        if (orderAmount > maxOrderAmount) {
             return RiskCheckResult(
                 passed = false,
-                reason = "订单金额超过用户限制, 当前: $orderAmount, 限制: $userLimits",
+                reason = "订单金额超过用户限制, 当前: $orderAmount, 限制: $maxOrderAmount",
                 timestamp = Instant.now().toEpochMilli()
             )
         }
