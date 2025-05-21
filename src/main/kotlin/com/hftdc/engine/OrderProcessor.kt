@@ -4,6 +4,7 @@ import com.hftdc.journal.JournalEvent
 import com.hftdc.journal.JournalService
 import com.hftdc.journal.OrderSubmittedEvent
 import com.hftdc.journal.TradeCreatedEvent
+import com.hftdc.metrics.OrderMetricsHandler
 import com.lmax.disruptor.EventFactory
 import com.lmax.disruptor.EventHandler
 import com.lmax.disruptor.RingBuffer
@@ -45,9 +46,15 @@ class OrderEventFactory : EventFactory<OrderEvent> {
 /**
  * 风控检查处理器 - 第一阶段处理，检查订单风控
  */
-class RiskCheckHandler(private val riskManager: com.hftdc.risk.RiskManager) : EventHandler<OrderEvent> {
+class RiskCheckHandler(
+    private val riskManager: com.hftdc.risk.RiskManager,
+    private val metricsHandler: OrderMetricsHandler? = null
+) : EventHandler<OrderEvent> {
     override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
         val order = event.order ?: return
+        
+        // 记录订单接收指标
+        metricsHandler?.recordOrderReceived(order)
         
         // 在这里实现风控逻辑
         logger.debug { "风控检查订单: $order" }
@@ -62,6 +69,9 @@ class RiskCheckHandler(private val riskManager: com.hftdc.risk.RiskManager) : Ev
             // 更新订单状态为拒绝
             val rejectedOrder = order.copy(status = OrderStatus.REJECTED)
             event.order = rejectedOrder
+            
+            // 记录订单完成指标
+            metricsHandler?.recordOrderCompleted(rejectedOrder)
             
             // TODO: 发送拒绝通知给用户
         } else {
@@ -79,7 +89,8 @@ class RiskCheckHandler(private val riskManager: com.hftdc.risk.RiskManager) : Ev
  */
 class OrderMatchHandler(
     private val orderBookManager: OrderBookManager,
-    private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null
+    private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null,
+    private val metricsHandler: OrderMetricsHandler? = null
 ) : EventHandler<OrderEvent> {
     override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
         val order = event.order ?: return
@@ -98,12 +109,20 @@ class OrderMatchHandler(
         if (trades.isNotEmpty()) {
             logger.info { "订单 ${order.id} 产生了 ${trades.size} 笔交易" }
             
+            // 记录订单执行指标
+            metricsHandler?.recordOrderExecuted(order, trades)
+            
             // 发布交易到市场数据处理器
             trades.forEach { trade ->
                 marketDataProcessor?.onTrade(trade)
             }
         } else {
             logger.debug { "订单 ${order.id} 未匹配，已加入订单簿" }
+        }
+        
+        // 如果订单已完全成交或已取消，记录完成指标
+        if (order.status == OrderStatus.FILLED || order.status == OrderStatus.CANCELED) {
+            metricsHandler?.recordOrderCompleted(order)
         }
         
         // 更新事件时间戳，用于性能指标收集
@@ -114,7 +133,10 @@ class OrderMatchHandler(
 /**
  * 日志记录处理器 - 第三阶段处理，记录订单处理日志
  */
-class JournalHandler(private val journalService: JournalService?) : EventHandler<OrderEvent> {
+class JournalHandler(
+    private val journalService: JournalService?,
+    private val metricsHandler: OrderMetricsHandler? = null
+) : EventHandler<OrderEvent> {
     // 事件ID计数器
     private val eventIdCounter = AtomicLong(0)
     
@@ -149,6 +171,11 @@ class JournalHandler(private val journalService: JournalService?) : EventHandler
             logger.debug { "跳过日志记录，未配置日志服务" }
         }
         
+        // 周期性清理过期的指标记录
+        if (sequence % 1000 == 0) {
+            metricsHandler?.cleanupStaleRecords()
+        }
+        
         // 清空事件，以便重用
         event.clear()
     }
@@ -164,7 +191,8 @@ class OrderProcessor(
     private val orderBookManager: OrderBookManager,
     private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null,
     private val riskManager: com.hftdc.risk.RiskManager? = null,
-    private val journalService: JournalService? = null
+    private val journalService: JournalService? = null,
+    private val orderMetricsHandler: OrderMetricsHandler? = null
 ) {
     private val disruptor: Disruptor<OrderEvent>
     private val ringBuffer: RingBuffer<OrderEvent>
@@ -181,19 +209,29 @@ class OrderProcessor(
         
         // 配置处理链
         val riskHandler = if (riskManager != null) {
-            RiskCheckHandler(riskManager)
+            RiskCheckHandler(riskManager, orderMetricsHandler)
         } else {
             object : EventHandler<OrderEvent> {
                 override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
                     // 无风险管理器时，跳过风险检查
                     logger.debug { "跳过风险检查，未配置风险管理器" }
+                    
+                    // 记录订单接收指标
+                    event.order?.let { order ->
+                        orderMetricsHandler?.recordOrderReceived(order)
+                    }
                 }
             }
         }
         
+        // 创建订单匹配处理器和日志处理器
+        val matchHandler = OrderMatchHandler(orderBookManager, marketDataProcessor, orderMetricsHandler)
+        val journalHandler = JournalHandler(journalService, orderMetricsHandler)
+        
+        // 设置处理链
         disruptor.handleEventsWith(riskHandler)
-            .then(OrderMatchHandler(orderBookManager, marketDataProcessor))
-            .then(JournalHandler(journalService))
+            .then(matchHandler)
+            .then(journalHandler)
         
         // 启动Disruptor
         ringBuffer = disruptor.start()

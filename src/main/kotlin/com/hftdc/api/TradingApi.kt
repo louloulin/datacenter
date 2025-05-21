@@ -5,6 +5,7 @@ import com.hftdc.core.ForwardOrder
 import com.hftdc.core.GetSystemStatus
 import com.hftdc.core.RootCommand
 import com.hftdc.core.SystemStatus
+import com.hftdc.engine.OrderBookManager
 import com.hftdc.model.Order
 import com.hftdc.model.OrderBookSnapshot
 import com.hftdc.model.OrderSide
@@ -25,7 +26,10 @@ private val logger = KotlinLogging.logger {}
 /**
  * 交易API - 提供交易相关的API接口
  */
-class TradingApi(private val rootActor: ActorRef<RootCommand>) {
+class TradingApi(
+    private val rootActor: ActorRef<RootCommand>,
+    private val orderBookManager: OrderBookManager
+) {
     
     // 订单ID生成器
     private val orderIdGenerator = AtomicLong(1)
@@ -110,6 +114,7 @@ class TradingApi(private val rootActor: ActorRef<RootCommand>) {
                 instrumentId = request.instrumentId,
                 price = request.price,
                 quantity = request.quantity,
+                remainingQuantity = request.quantity, // 初始时剩余数量等于总数量
                 side = request.side,
                 type = request.type,
                 timeInForce = request.timeInForce,
@@ -125,8 +130,7 @@ class TradingApi(private val rootActor: ActorRef<RootCommand>) {
             
             logger.info { "提交订单: $orderId, 用户: ${request.userId}, 品种: ${request.instrumentId}" }
             
-            // TODO: 此处应该等待订单处理结果
-            // 为简化示例，这里直接返回成功
+            // TODO: 完整实现应该等待订单处理结果，这里简化处理
             future.complete(PlaceOrderResponse(
                 orderId = orderId,
                 status = OrderStatus.NEW
@@ -146,14 +150,39 @@ class TradingApi(private val rootActor: ActorRef<RootCommand>) {
         val future = CompletableFuture<CancelOrderResponse>()
         
         try {
-            // TODO: 实现取消订单逻辑
+            // 查找订单所在的订单簿
+            var orderInstrumentId: String? = null
+            var cancelledOrder: Order? = null
             
-            logger.info { "取消订单: ${request.orderId}, 用户: ${request.userId}" }
+            // 遍历所有活跃订单簿，查找订单
+            for (instrumentId in orderBookManager.getActiveInstrumentIds()) {
+                val orderBook = orderBookManager.getOrderBook(instrumentId)
+                val order = orderBook.getOrder(request.orderId)
+                
+                if (order != null && order.userId == request.userId) {
+                    orderInstrumentId = instrumentId
+                    break
+                }
+            }
             
-            // 为简化示例，这里直接返回成功
-            future.complete(CancelOrderResponse(
-                success = true
-            ))
+            // 如果找到订单，尝试取消
+            if (orderInstrumentId != null) {
+                val orderBook = orderBookManager.getOrderBook(orderInstrumentId)
+                cancelledOrder = orderBook.cancelOrder(request.orderId)
+            }
+            
+            if (cancelledOrder != null) {
+                logger.info { "取消订单成功: ${request.orderId}, 用户: ${request.userId}" }
+                future.complete(CancelOrderResponse(
+                    success = true
+                ))
+            } else {
+                logger.warn { "取消订单失败: ${request.orderId}, 用户: ${request.userId}, 未找到订单或无法取消" }
+                future.complete(CancelOrderResponse(
+                    success = false,
+                    message = "Order not found or cannot be canceled"
+                ))
+            }
         } catch (e: Exception) {
             logger.error(e) { "取消订单失败" }
             future.complete(CancelOrderResponse(
@@ -172,11 +201,20 @@ class TradingApi(private val rootActor: ActorRef<RootCommand>) {
         val future = CompletableFuture<Order?>()
         
         try {
-            // TODO: 实现查询订单逻辑
+            // 遍历所有活跃订单簿，查找订单
+            for (instrumentId in orderBookManager.getActiveInstrumentIds()) {
+                val orderBook = orderBookManager.getOrderBook(instrumentId)
+                val order = orderBook.getOrder(request.orderId)
+                
+                if (order != null && order.userId == request.userId) {
+                    logger.info { "查询订单成功: ${request.orderId}, 用户: ${request.userId}" }
+                    future.complete(order)
+                    return future
+                }
+            }
             
-            logger.info { "查询订单: ${request.orderId}, 用户: ${request.userId}" }
-            
-            // 为简化示例，这里直接返回null
+            // 未找到订单
+            logger.warn { "查询订单: ${request.orderId}, 用户: ${request.userId}, 未找到订单" }
             future.complete(null)
         } catch (e: Exception) {
             logger.error(e) { "查询订单失败" }
@@ -193,17 +231,27 @@ class TradingApi(private val rootActor: ActorRef<RootCommand>) {
         val future = CompletableFuture<OrderBookSnapshot>()
         
         try {
-            // TODO: 实现查询订单簿逻辑
+            val instrumentId = request.instrumentId
+            val depth = request.depth
             
-            logger.info { "查询订单簿: ${request.instrumentId}, 深度: ${request.depth}" }
-            
-            // 为简化示例，这里返回一个空的订单簿快照
-            future.complete(OrderBookSnapshot(
-                instrumentId = request.instrumentId,
-                bids = emptyList(),
-                asks = emptyList(),
-                timestamp = Instant.now().toEpochMilli()
-            ))
+            // 检查交易品种是否存在
+            if (!orderBookManager.hasInstrument(instrumentId)) {
+                // 如果不存在，创建一个空的订单簿
+                logger.info { "查询订单簿: $instrumentId, 交易品种不存在，返回空订单簿" }
+                future.complete(OrderBookSnapshot(
+                    instrumentId = instrumentId,
+                    bids = emptyList(),
+                    asks = emptyList(),
+                    timestamp = Instant.now().toEpochMilli()
+                ))
+            } else {
+                // 获取订单簿并生成快照
+                val orderBook = orderBookManager.getOrderBook(instrumentId)
+                val snapshot = orderBook.getSnapshot(depth)
+                
+                logger.info { "查询订单簿成功: $instrumentId, 深度: $depth" }
+                future.complete(snapshot)
+            }
         } catch (e: Exception) {
             logger.error(e) { "查询订单簿失败" }
             future.completeExceptionally(e)
@@ -219,16 +267,19 @@ class TradingApi(private val rootActor: ActorRef<RootCommand>) {
         val future = CompletableFuture<SystemStatus>()
         
         try {
-            // TODO: 实现查询系统状态逻辑
+            // 收集系统状态信息
+            val orderBookCount = orderBookManager.getOrderBookCount()
+            val totalOrderCount = orderBookManager.getTotalOrderCount()
+            val activeInstruments = orderBookManager.getActiveInstrumentIds().toList()
             
-            logger.info { "查询系统状态" }
+            val status = SystemStatus(
+                orderBookCount = orderBookCount,
+                totalOrderCount = totalOrderCount,
+                activeInstruments = activeInstruments
+            )
             
-            // 为简化示例，这里返回一个空的系统状态
-            future.complete(SystemStatus(
-                orderBookCount = 0,
-                totalOrderCount = 0,
-                activeInstruments = emptyList()
-            ))
+            logger.info { "查询系统状态成功: 订单簿数量=$orderBookCount, 订单总数=$totalOrderCount" }
+            future.complete(status)
         } catch (e: Exception) {
             logger.error(e) { "查询系统状态失败" }
             future.completeExceptionally(e)

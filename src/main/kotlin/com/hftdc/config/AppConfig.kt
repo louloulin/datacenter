@@ -12,7 +12,8 @@ data class AppConfig(
     val akka: AkkaConfig,
     val db: DbConfig,
     val engine: EngineConfig,
-    val recovery: RecoveryConfig
+    val recovery: RecoveryConfig,
+    val api: ApiConfig
 ) {
     companion object {
         /**
@@ -25,7 +26,8 @@ data class AppConfig(
                 akka = AkkaConfig.fromConfig(config.getConfig("akka")),
                 db = DbConfig.fromConfig(config.getConfig("db")),
                 engine = EngineConfig.fromConfig(config.getConfig("engine")),
-                recovery = RecoveryConfig.fromConfig(config.getConfig("recovery"))
+                recovery = RecoveryConfig.fromConfig(config.getConfig("recovery")),
+                api = ApiConfig.fromConfig(config.getConfig("api"))
             )
         }
 
@@ -40,6 +42,25 @@ data class AppConfig(
                 ConfigFactory.load()
             }
         }
+    }
+}
+
+/**
+ * API配置
+ */
+data class ApiConfig(
+    val host: String,
+    val port: Int,
+    val enableCors: Boolean,
+    val requestTimeoutMs: Long
+) {
+    companion object {
+        fun fromConfig(config: Config): ApiConfig = ApiConfig(
+            host = if (config.hasPath("host")) config.getString("host") else "0.0.0.0",
+            port = if (config.hasPath("port")) config.getInt("port") else 8080,
+            enableCors = if (config.hasPath("enable-cors")) config.getBoolean("enable-cors") else true,
+            requestTimeoutMs = if (config.hasPath("request-timeout-ms")) config.getLong("request-timeout-ms") else 30000
+        )
     }
 }
 

@@ -5,6 +5,8 @@ import com.hftdc.config.AppConfig
 import com.hftdc.core.ActorSystemManager
 import com.hftdc.engine.OrderBookManager
 import com.hftdc.engine.OrderProcessor
+import com.hftdc.http.HttpServer
+import com.hftdc.http.HttpServerConfig
 import com.hftdc.journal.FileJournalService
 import com.hftdc.journal.JournalService
 import com.hftdc.journal.RecoveryService
@@ -53,7 +55,10 @@ data class ApplicationComponents(
     val riskManager: com.hftdc.risk.RiskManager,
     val journalService: JournalService,
     val recoveryService: RecoveryService?,
-    val snapshotManager: SnapshotManager
+    val snapshotManager: SnapshotManager,
+    val httpServer: HttpServer,
+    val metricsService: com.hftdc.metrics.MetricsService,
+    val orderMetricsHandler: com.hftdc.metrics.OrderMetricsHandler
 )
 
 /**
@@ -103,6 +108,20 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
         null
     }
     
+    // 创建指标处理器
+    val orderMetricsHandler = com.hftdc.metrics.OrderMetricsHandler()
+    
+    // 创建指标服务
+    val metricsService = com.hftdc.metrics.MetricsService(
+        config = com.hftdc.metrics.MetricsConfig(
+            enablePrometheus = config.monitoring.prometheusEnabled,
+            prometheusPort = config.monitoring.prometheusPort,
+            collectionIntervalMs = config.monitoring.metricsIntervalSeconds * 1000L,
+            jvmMetricsEnabled = true
+        ),
+        orderBookManager = orderBookManager
+    )
+    
     // 创建风险管理器
     val riskManager = com.hftdc.risk.RiskManager()
     
@@ -118,7 +137,8 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
         orderBookManager = orderBookManager,
         marketDataProcessor = marketDataProcessor,
         riskManager = riskManager,
-        journalService = journalService
+        journalService = journalService,
+        orderMetricsHandler = orderMetricsHandler // 添加指标处理器
     )
     
     // 创建市场数据发布器
@@ -127,7 +147,24 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
     )
     
     // 创建交易API
-    val tradingApi = TradingApi(actorSystemManager.getRootActor())
+    val tradingApi = TradingApi(
+        rootActor = actorSystemManager.getRootActor(),
+        orderBookManager = orderBookManager
+    )
+    
+    // 创建HTTP服务器
+    val httpServer = HttpServer(
+        config = HttpServerConfig(
+            host = config.api.host,
+            port = config.api.port,
+            enableCors = true,
+            requestTimeoutMs = 30000
+        ),
+        tradingApi = tradingApi,
+        orderBookManager = orderBookManager,
+        journalService = journalService,
+        recoveryService = recoveryService
+    )
     
     return ApplicationComponents(
         actorSystemManager = actorSystemManager,
@@ -139,7 +176,10 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
         riskManager = riskManager,
         journalService = journalService,
         recoveryService = recoveryService,
-        snapshotManager = snapshotManager
+        snapshotManager = snapshotManager,
+        httpServer = httpServer,
+        metricsService = metricsService,
+        orderMetricsHandler = orderMetricsHandler
     )
 }
 
@@ -162,6 +202,12 @@ private fun startComponents(components: ApplicationComponents) {
     // 启动快照管理器
     components.snapshotManager.start()
     
+    // 启动指标服务
+    components.metricsService.start()
+    
+    // 启动HTTP服务器
+    components.httpServer.start()
+    
     // 其他组件已经在创建时自动启动
     
     logger.info { "All components started" }
@@ -173,7 +219,13 @@ private fun startComponents(components: ApplicationComponents) {
 private fun stopComponents(components: ApplicationComponents) {
     logger.info { "Stopping components..." }
     
-    // 停止顺序很重要，先停API和市场数据发布器，再停处理器，最后停Actor系统
+    // 停止顺序很重要，先停API服务器，再停处理器，最后停核心组件
+    
+    // 停止HTTP服务器
+    components.httpServer.stop()
+    
+    // 停止指标服务
+    components.metricsService.stop()
     
     // 停止市场数据发布器
     components.marketDataPublisher.shutdown()

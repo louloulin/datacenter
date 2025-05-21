@@ -27,12 +27,21 @@ val logbackVersion = "1.4.7"
 val prometheusVersion = "0.16.0"
 val junitVersion = "5.9.3"
 val mockkVersion = "1.13.5"
+val ktorVersion = "2.3.0"
 
 dependencies {
     // Kotlin
     implementation(kotlin("stdlib"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinSerializationVersion")
+    
+    // Ktor - REST API
+    implementation("io.ktor:ktor-server-core:$ktorVersion")
+    implementation("io.ktor:ktor-server-netty:$ktorVersion")
+    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
+    implementation("io.ktor:ktor-server-cors:$ktorVersion")
+    implementation("io.ktor:ktor-server-status-pages:$ktorVersion")
     
     // Disruptor
     implementation("com.lmax:disruptor:$disruptorVersion")
