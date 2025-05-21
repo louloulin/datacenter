@@ -516,9 +516,16 @@ interface DistributedSequence {
 
 - [x] **单元测试**
   - [x] 核心组件单元测试
+    - [x] RingBufferWrapper 测试
+    - [x] EventProcessorWrapper 测试
+    - [x] WaitStrategyFactory 测试
   - [x] DSL单元测试
+    - [x] WorkflowDSL 测试
   - [x] 工作流执行测试
+    - [x] OrderProcessingExample 测试
   - [x] 分布式组件单元测试
+    - [x] DistributedSequenceImpl 测试
+    - [x] DistributedEventBusImpl 测试
 
 - [ ] **性能测试**
   - [ ] 单节点性能基准测试

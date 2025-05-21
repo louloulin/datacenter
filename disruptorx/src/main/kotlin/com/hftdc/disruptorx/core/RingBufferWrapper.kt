@@ -1,6 +1,8 @@
 package com.hftdc.disruptorx.core
 
 import com.lmax.disruptor.EventFactory
+import com.lmax.disruptor.EventTranslator
+import com.lmax.disruptor.EventTranslatorOneArg
 import com.lmax.disruptor.RingBuffer
 import com.lmax.disruptor.Sequence
 import com.lmax.disruptor.SequenceBarrier
@@ -29,7 +31,10 @@ class RingBufferWrapper<T>(private val underlying: RingBuffer<T>) {
      * @param translator 事件转换器函数
      */
     fun publish(translator: (Long, T) -> Unit) {
-        underlying.publishEvent(translator)
+        val eventTranslator = EventTranslator<T> { event, sequence -> 
+            translator(sequence, event)
+        }
+        underlying.publishEvent(eventTranslator)
     }
 
     /**
@@ -38,7 +43,10 @@ class RingBufferWrapper<T>(private val underlying: RingBuffer<T>) {
      * @param data 要传递给转换器的数据
      */
     fun <A> publish(translator: (Long, T, A) -> Unit, data: A) {
-        underlying.publishEvent(translator, data)
+        val eventTranslator = EventTranslatorOneArg<T, A> { event, sequence, arg ->
+            translator(sequence, event, arg)
+        }
+        underlying.publishEvent(eventTranslator, data)
     }
 
     /**

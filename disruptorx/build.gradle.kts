@@ -35,7 +35,7 @@ dependencies {
     
     // Metrics & Monitoring
     implementation("io.micrometer:micrometer-core:1.10.5")
-    implementation("org.HdrHistogram:HdrHistogram:2.1.12")
+    implementation("org.hdrhistogram:HdrHistogram:2.1.12")
 }
 
 tasks.test {
