@@ -1,0 +1,28 @@
+FROM openjdk:17-slim
+
+WORKDIR /app
+
+# 复制构建好的JAR文件
+COPY build/libs/disruptorx-*.jar app.jar
+
+# 复制启动脚本
+COPY dockertest/start-node.sh /app/start-node.sh
+RUN chmod +x /app/start-node.sh
+
+# 创建日志目录
+RUN mkdir -p /app/logs
+
+# 定义环境变量
+ENV NODE_ID=node1 \
+    NODE_ROLE=MIXED \
+    SEED_NODES="node1:9090" \
+    HOST="0.0.0.0" \
+    PORT=9090 \
+    LEADER_CANDIDATE=true \
+    JVM_OPTS="-Xmx512m -XX:+UseG1GC"
+
+# 暴露端口
+EXPOSE 9090 8080
+
+# 启动命令
+ENTRYPOINT ["/app/start-node.sh"] 
