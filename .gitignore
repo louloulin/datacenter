@@ -1,0 +1,40 @@
+# Gradle
+.gradle/
+build/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# Mac
+.DS_Store
+
+# Java
+*.class
+*.log
+*.jar
+hs_err_pid*
+
+# Kotlin
+kotlin-build/
+
+# Akka
+logs/
+
+# Application specific
+*.db
+*.db-journal
+*.hprof
+tmp/ 

@@ -1,0 +1,160 @@
+package com.hftdc.engine
+
+import com.lmax.disruptor.EventFactory
+import com.lmax.disruptor.EventHandler
+import com.lmax.disruptor.RingBuffer
+import com.lmax.disruptor.WaitStrategy
+import com.lmax.disruptor.YieldingWaitStrategy
+import com.lmax.disruptor.dsl.Disruptor
+import com.lmax.disruptor.dsl.ProducerType
+import com.lmax.disruptor.util.DaemonThreadFactory
+import com.hftdc.model.Order
+import mu.KotlinLogging
+import java.time.Instant
+
+private val logger = KotlinLogging.logger {}
+
+/**
+ * 订单事件 - Disruptor环形缓冲区中的元素
+ */
+data class OrderEvent(
+    var order: Order? = null,
+    var timestamp: Long = 0
+) {
+    fun clear() {
+        order = null
+        timestamp = 0
+    }
+}
+
+/**
+ * 订单事件工厂 - 创建订单事件的工厂
+ */
+class OrderEventFactory : EventFactory<OrderEvent> {
+    override fun newInstance(): OrderEvent = OrderEvent()
+}
+
+/**
+ * 风控检查处理器 - 第一阶段处理，检查订单风控
+ */
+class RiskCheckHandler : EventHandler<OrderEvent> {
+    override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
+        val order = event.order ?: return
+        
+        // 在这里实现风控逻辑
+        logger.debug { "风控检查订单: $order" }
+        
+        // TODO: 检查余额、持仓限制等
+        
+        // 更新事件时间戳，用于性能指标收集
+        event.timestamp = Instant.now().toEpochMilli()
+    }
+}
+
+/**
+ * 订单匹配处理器 - 第二阶段处理，执行订单匹配
+ */
+class OrderMatchHandler(
+    private val orderBookManager: OrderBookManager,
+    private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null
+) : EventHandler<OrderEvent> {
+    override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
+        val order = event.order ?: return
+        
+        // 在这里实现订单匹配逻辑
+        logger.debug { "匹配订单: $order" }
+        
+        // 获取订单簿并执行订单匹配
+        val orderBook = orderBookManager.getOrderBook(order.instrumentId)
+        val trades = orderBook.addOrder(order)
+        
+        // 处理交易结果
+        if (trades.isNotEmpty()) {
+            logger.info { "订单 ${order.id} 产生了 ${trades.size} 笔交易" }
+            
+            // 发布交易到市场数据处理器
+            trades.forEach { trade ->
+                marketDataProcessor?.onTrade(trade)
+            }
+        } else {
+            logger.debug { "订单 ${order.id} 未匹配，已加入订单簿" }
+        }
+        
+        // 更新事件时间戳，用于性能指标收集
+        event.timestamp = Instant.now().toEpochMilli()
+    }
+}
+
+/**
+ * 日志记录处理器 - 第三阶段处理，记录订单处理日志
+ */
+class JournalHandler : EventHandler<OrderEvent> {
+    override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
+        val order = event.order ?: return
+        
+        // 在这里实现日志记录逻辑
+        logger.debug { "记录订单日志: $order" }
+        
+        // TODO: 将订单和交易写入持久化存储
+        
+        // 清空事件，以便重用
+        event.clear()
+    }
+}
+
+/**
+ * 订单处理器 - 使用Disruptor处理订单
+ */
+class OrderProcessor(
+    bufferSize: Int = 4096,
+    private val waitStrategy: WaitStrategy = YieldingWaitStrategy(),
+    private val producerType: ProducerType = ProducerType.MULTI,
+    private val orderBookManager: OrderBookManager,
+    private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null
+) {
+    private val disruptor: Disruptor<OrderEvent>
+    private val ringBuffer: RingBuffer<OrderEvent>
+    
+    init {
+        // 创建Disruptor
+        disruptor = Disruptor(
+            OrderEventFactory(),
+            bufferSize,
+            DaemonThreadFactory.INSTANCE,
+            producerType,
+            waitStrategy
+        )
+        
+        // 配置处理链
+        disruptor.handleEventsWith(RiskCheckHandler())
+            .then(OrderMatchHandler(orderBookManager, marketDataProcessor))
+            .then(JournalHandler())
+        
+        // 启动Disruptor
+        ringBuffer = disruptor.start()
+        
+        logger.info { "订单处理器已启动，缓冲区大小: $bufferSize" }
+    }
+    
+    /**
+     * 提交订单到处理队列
+     */
+    fun submitOrder(order: Order) {
+        val sequence = ringBuffer.next()
+        try {
+            val event = ringBuffer.get(sequence)
+            event.order = order
+            event.timestamp = Instant.now().toEpochMilli()
+        } finally {
+            ringBuffer.publish(sequence)
+        }
+    }
+    
+    /**
+     * 关闭处理器
+     */
+    fun shutdown() {
+        logger.info { "关闭订单处理器..." }
+        disruptor.shutdown()
+    }
+} 
