@@ -100,7 +100,9 @@ class MemoryPreallocator<T : Any>(
      */
     fun recycle(resource: T): Boolean {
         // 检查资源是否由此分配器分配
-        if (!allocatedResources.remove(resource)) {
+        // 使用安全调用语法，确保对null值的处理
+        val removed = allocatedResources.remove(resource)
+        if (removed != true) {
             return false
         }
         
