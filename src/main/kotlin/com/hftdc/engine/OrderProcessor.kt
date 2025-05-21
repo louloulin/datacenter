@@ -9,6 +9,7 @@ import com.lmax.disruptor.dsl.Disruptor
 import com.lmax.disruptor.dsl.ProducerType
 import com.lmax.disruptor.util.DaemonThreadFactory
 import com.hftdc.model.Order
+import com.hftdc.model.OrderStatus
 import mu.KotlinLogging
 import java.time.Instant
 
@@ -37,14 +38,29 @@ class OrderEventFactory : EventFactory<OrderEvent> {
 /**
  * 风控检查处理器 - 第一阶段处理，检查订单风控
  */
-class RiskCheckHandler : EventHandler<OrderEvent> {
+class RiskCheckHandler(private val riskManager: com.hftdc.risk.RiskManager) : EventHandler<OrderEvent> {
     override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
         val order = event.order ?: return
         
         // 在这里实现风控逻辑
         logger.debug { "风控检查订单: $order" }
         
-        // TODO: 检查余额、持仓限制等
+        // 执行风险检查
+        val result = riskManager.checkOrder(order)
+        
+        // 如果订单未通过风险检查，将其标记为拒绝
+        if (!result.passed) {
+            logger.warn { "订单 ${order.id} 被风险控制拒绝: ${result.reason}" }
+            
+            // 更新订单状态为拒绝
+            val rejectedOrder = order.copy(status = OrderStatus.REJECTED)
+            event.order = rejectedOrder
+            
+            // TODO: 发送拒绝通知给用户
+        } else {
+            // 记录用户下单事件，更新速率限制
+            riskManager.recordOrderEvent(order.userId)
+        }
         
         // 更新事件时间戳，用于性能指标收集
         event.timestamp = Instant.now().toEpochMilli()
@@ -110,7 +126,8 @@ class OrderProcessor(
     private val waitStrategy: WaitStrategy = YieldingWaitStrategy(),
     private val producerType: ProducerType = ProducerType.MULTI,
     private val orderBookManager: OrderBookManager,
-    private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null
+    private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null,
+    private val riskManager: com.hftdc.risk.RiskManager? = null
 ) {
     private val disruptor: Disruptor<OrderEvent>
     private val ringBuffer: RingBuffer<OrderEvent>
@@ -126,7 +143,18 @@ class OrderProcessor(
         )
         
         // 配置处理链
-        disruptor.handleEventsWith(RiskCheckHandler())
+        val riskHandler = if (riskManager != null) {
+            RiskCheckHandler(riskManager)
+        } else {
+            object : EventHandler<OrderEvent> {
+                override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
+                    // 无风险管理器时，跳过风险检查
+                    logger.debug { "跳过风险检查，未配置风险管理器" }
+                }
+            }
+        }
+        
+        disruptor.handleEventsWith(riskHandler)
             .then(OrderMatchHandler(orderBookManager, marketDataProcessor))
             .then(JournalHandler())
         

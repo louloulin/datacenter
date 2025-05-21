@@ -45,7 +45,8 @@ data class ApplicationComponents(
     val orderProcessor: OrderProcessor,
     val tradingApi: TradingApi,
     val marketDataProcessor: com.hftdc.market.MarketDataProcessor,
-    val marketDataPublisher: com.hftdc.market.WebSocketMarketDataPublisher
+    val marketDataPublisher: com.hftdc.market.WebSocketMarketDataPublisher,
+    val riskManager: com.hftdc.risk.RiskManager
 )
 
 /**
@@ -63,6 +64,9 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
         snapshotIntervalMs = config.engine.snapshotInterval.toLong()
     )
     
+    // 创建风险管理器
+    val riskManager = com.hftdc.risk.RiskManager()
+    
     // 创建市场数据处理器
     val marketDataProcessor = com.hftdc.market.MarketDataProcessor(
         orderBookManager = orderBookManager,
@@ -73,7 +77,8 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
     val orderProcessor = OrderProcessor(
         bufferSize = config.disruptor.bufferSize,
         orderBookManager = orderBookManager,
-        marketDataProcessor = marketDataProcessor
+        marketDataProcessor = marketDataProcessor,
+        riskManager = riskManager
     )
     
     // 创建市场数据发布器
@@ -90,7 +95,8 @@ private fun createComponents(config: AppConfig): ApplicationComponents {
         orderProcessor = orderProcessor,
         tradingApi = tradingApi,
         marketDataProcessor = marketDataProcessor,
-        marketDataPublisher = marketDataPublisher
+        marketDataPublisher = marketDataPublisher,
+        riskManager = riskManager
     )
 }
 
@@ -124,6 +130,9 @@ private fun stopComponents(components: ApplicationComponents) {
     
     // 停止订单处理器
     components.orderProcessor.shutdown()
+    
+    // 停止风险管理器
+    components.riskManager.shutdown()
     
     // 停止订单簿管理器
     components.orderBookManager.shutdown()
