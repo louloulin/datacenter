@@ -65,7 +65,5 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
   echo -e "${YELLOW}关闭测试环境...${NC}"
   docker-compose down
   docker network rm disruptorx-network 2>/dev/null || true
-else
-  echo -e "${YELLOW}测试环境保持运行中.${NC}"
-  echo -e "使用 'docker-compose down' 命令手动关闭."
+  echo -e "${GREEN}测试环境已关闭${NC}"
 fi 
