@@ -1,6 +1,7 @@
 package com.hftdc.config.dsl
 
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -36,10 +37,15 @@ enum class AlertSeverity {
  * 交易数据中心DSL根配置
  */
 @TradingPlatformDsl
-class DataCenterConfig : PlatformConfig() {
+class DataCenterConfig {
+    var server: ServerConfig = ServerConfig()
     var dataStorage: DataStorageConfig = DataStorageConfig()
     var cluster: ClusterConfig = ClusterConfig()
     var analytics: AnalyticsConfig = AnalyticsConfig()
+    
+    fun server(init: ServerConfig.() -> Unit) {
+        server = ServerConfig().apply(init)
+    }
 }
 
 /**
