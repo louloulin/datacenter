@@ -3,185 +3,209 @@
 
 import os
 import sys
-import pandas as pd
-import matplotlib.pyplot as plt
 import glob
+import csv
+import re
+import matplotlib.pyplot as plt
+import numpy as np
+from datetime import datetime
+import argparse
 
 def find_latest_benchmark():
-    """Find the most recent benchmark results directory"""
-    advanced_dirs = sorted(glob.glob("benchmark-results/advanced-*"), reverse=True)
-    if advanced_dirs:
-        return advanced_dirs[0]
-    else:
-        print("No benchmark results found. Run advanced-benchmark.sh first.")
+    """查找最新的基准测试结果目录"""
+    dirs = sorted(glob.glob('performance-results/*/'), reverse=True)
+    if not dirs:
+        print("未找到性能测试结果目录")
         sys.exit(1)
+    return dirs[0]
 
-def plot_performance(benchmark_dir, rate=None):
-    """Plot performance metrics for a specific benchmark or all benchmarks"""
-    plt.style.use('ggplot')
+def parse_benchmark_report(file_path):
+    """解析基准测试报告文件"""
+    data = {}
+    with open(file_path, 'r') as f:
+        content = f.read()
+        
+        # 提取基本信息
+        data['name'] = re.search(r'====== 性能分析报告: (.*) ======', content).group(1)
+        data['timestamp'] = re.search(r'时间: (.*)', content).group(1)
+        data['event_count'] = int(re.search(r'总事件数: (\d+)', content).group(1))
+        data['duration'] = float(re.search(r'持续时间: ([\d\.]+) 秒', content).group(1))
+        data['throughput'] = int(re.search(r'吞吐量: (\d+) 事件/秒', content).group(1))
+        
+        # 提取延迟数据
+        data['median_latency'] = float(re.search(r'中位数: ([\d\.]+)', content).group(1))
+        data['p90_latency'] = float(re.search(r'90%: ([\d\.]+)', content).group(1))
+        data['p99_latency'] = float(re.search(r'99%: ([\d\.]+)', content).group(1))
+        data['p999_latency'] = float(re.search(r'99.9%: ([\d\.]+)', content).group(1))
+        data['max_latency'] = float(re.search(r'最大: ([\d\.]+)', content).group(1))
+        
+        # 提取GC统计
+        data['gc_pause'] = int(re.search(r'GC暂停总时间: (\d+) 毫秒', content).group(1))
+        data['gc_percentage'] = float(re.search(r'GC暂停百分比: ([\d\.]+)%', content).group(1))
+        
+        # 提取资源使用
+        data['cpu_utilization'] = int(re.search(r'CPU利用率: (\d+)%', content).group(1))
+        data['memory_usage'] = int(re.search(r'内存使用峰值: (\d+) MB', content).group(1))
     
-    if rate:
-        # Plot specific rate
-        target_dirs = [os.path.join(benchmark_dir, d) for d in os.listdir(benchmark_dir) 
-                      if d.endswith(f"{rate}msg") and os.path.isdir(os.path.join(benchmark_dir, d))]
-    else:
-        # Plot all rates
-        target_dirs = [os.path.join(benchmark_dir, d) for d in os.listdir(benchmark_dir) 
-                      if d.endswith("msg") and os.path.isdir(os.path.join(benchmark_dir, d))]
-    
-    if not target_dirs:
-        print(f"No benchmark data found for rate {rate if rate else 'any'}.")
-        return
-    
-    # Create figure with subplots
-    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('DisruptorX 性能测试结果', fontsize=16)
-    
-    # For throughput comparison
-    rates = []
-    throughputs = []
+    return data
+
+def parse_latency_csv(file_path):
+    """解析延迟分布CSV文件"""
+    percentiles = []
     latencies = []
     
-    for target_dir in target_dirs:
-        test_name = os.path.basename(target_dir)
-        rate_value = int(''.join(filter(str.isdigit, test_name.split('_')[-1])))
-        rates.append(rate_value)
-        
-        # Read CSV data
-        csv_path = os.path.join(target_dir, 'performance_data.csv')
-        if os.path.exists(csv_path):
-            df = pd.read_csv(csv_path)
-            
-            # Calculate average throughput and latency
-            avg_throughput = df['throughput'].mean()
-            throughputs.append(avg_throughput)
-            
-            # Median latency
-            avg_p50 = df['p50_latency'].mean()
-            avg_p99 = df['p99_latency'].mean()
-            avg_p999 = df['p999_latency'].mean()
-            latencies.append((avg_p50, avg_p99, avg_p999))
-            
-            # Plot throughput over time
-            axs[0, 0].plot(df['timestamp'], df['throughput'], 
-                        label=f"{rate_value}/s", linewidth=2)
-            
-            # Plot latency over time
-            axs[0, 1].plot(df['timestamp'], df['p50_latency'], 
-                        label=f"{rate_value}/s 中位数", linewidth=2, linestyle='-')
-            axs[0, 1].plot(df['timestamp'], df['p99_latency'], 
-                        label=f"{rate_value}/s 99%", linewidth=1, linestyle='--')
-            
-            # Read report data
-            report_path = os.path.join(target_dir, 'report.txt')
-            if os.path.exists(report_path):
-                try:
-                    with open(report_path, 'r', encoding='utf-8') as f:
-                        report_content = f.read()
-                except UnicodeDecodeError:
-                    # Try alternative encodings
-                    try:
-                        with open(report_path, 'r', encoding='latin-1') as f:
-                            report_content = f.read()
-                    except:
-                        report_content = ""
-                        print(f"Warning: Could not read report file {report_path}")
-                    
-                # Check if fault injection occurred
-                if "故障注入" in report_content:
-                    fault_time = None
-                    # Estimate fault injection time (rough approximation)
-                    timestamps = df['timestamp'].values
-                    for i in range(1, len(timestamps) - 1):
-                        if timestamps[i+1] - timestamps[i] > 3:  # Gap in timestamps
-                            fault_time = timestamps[i]
-                            break
-                    
-                    if fault_time is not None:
-                        # Mark fault injection
-                        axs[0, 0].axvline(x=fault_time, color='red', linestyle='--', 
-                                       label='故障注入' if rate_value == rates[0] else None)
-                        axs[0, 1].axvline(x=fault_time, color='red', linestyle='--')
+    with open(file_path, 'r') as f:
+        reader = csv.reader(f)
+        next(reader)  # 跳过标题行
+        for row in reader:
+            percentiles.append(float(row[0]))
+            latencies.append(float(row[1]))
     
-    # Sort by rate
-    rate_data = sorted(zip(rates, throughputs, latencies))
-    rates = [r for r, _, _ in rate_data]
-    throughputs = [t for _, t, _ in rate_data]
-    p50_latencies = [l[0] for _, _, l in rate_data]
-    p99_latencies = [l[1] for _, _, l in rate_data]
-    p999_latencies = [l[2] for _, _, l in rate_data]
+    return percentiles, latencies
+
+def compare_benchmarks(baseline_dir, optimized_dir):
+    """比较两个基准测试结果"""
+    # 查找报告文件
+    baseline_report = glob.glob(os.path.join(baseline_dir, '*.txt'))[0]
+    optimized_report = glob.glob(os.path.join(optimized_dir, '*.txt'))[0]
     
-    # Plot throughput comparison
-    axs[1, 0].bar(range(len(rates)), throughputs, color='skyblue')
-    axs[1, 0].set_xticks(range(len(rates)))
-    axs[1, 0].set_xticklabels([f"{r}/s" for r in rates])
+    # 解析报告
+    baseline_data = parse_benchmark_report(baseline_report)
+    optimized_data = parse_benchmark_report(optimized_report)
     
-    # Add target line
-    for i, r in enumerate(rates):
-        axs[1, 0].plot([i-0.4, i+0.4], [r, r], 'r--', linewidth=1)
+    # 查找延迟CSV文件
+    baseline_csv = glob.glob(os.path.join(baseline_dir, '*_latencies.csv'))[0]
+    optimized_csv = glob.glob(os.path.join(optimized_dir, '*_latencies.csv'))[0]
     
-    # Plot latency comparison
-    x = range(len(rates))
-    width = 0.25
-    axs[1, 1].bar([i-width for i in x], p50_latencies, width, label='中位数延迟', color='green')
-    axs[1, 1].bar([i for i in x], p99_latencies, width, label='99%延迟', color='orange')
-    axs[1, 1].bar([i+width for i in x], p999_latencies, width, label='99.9%延迟', color='red')
-    axs[1, 1].set_xticks(x)
-    axs[1, 1].set_xticklabels([f"{r}/s" for r in rates])
-    axs[1, 1].set_yscale('log')
+    # 解析延迟数据
+    baseline_percentiles, baseline_latencies = parse_latency_csv(baseline_csv)
+    optimized_percentiles, optimized_latencies = parse_latency_csv(optimized_csv)
     
-    # Set labels and legends
-    axs[0, 0].set_title('吞吐量随时间变化')
-    axs[0, 0].set_xlabel('时间 (秒)')
-    axs[0, 0].set_ylabel('吞吐量 (订单/秒)')
-    axs[0, 0].legend()
-    axs[0, 0].grid(True)
+    # 计算改进百分比
+    throughput_improvement = (optimized_data['throughput'] - baseline_data['throughput']) * 100 / baseline_data['throughput']
+    latency_improvement = (baseline_data['p99_latency'] - optimized_data['p99_latency']) * 100 / baseline_data['p99_latency']
     
-    axs[0, 1].set_title('延迟随时间变化')
-    axs[0, 1].set_xlabel('时间 (秒)')
-    axs[0, 1].set_ylabel('延迟 (微秒)')
-    axs[0, 1].legend()
-    axs[0, 1].grid(True)
+    # 绘制对比图
+    plt.figure(figsize=(15, 10))
     
-    axs[1, 0].set_title('不同速率的平均吞吐量')
-    axs[1, 0].set_xlabel('目标速率')
-    axs[1, 0].set_ylabel('实际吞吐量 (订单/秒)')
-    axs[1, 0].grid(True)
+    # 1. 吞吐量对比
+    plt.subplot(2, 2, 1)
+    labels = ['基线版本', '优化版本']
+    throughputs = [baseline_data['throughput'], optimized_data['throughput']]
+    plt.bar(labels, throughputs, color=['blue', 'green'])
+    plt.title('吞吐量对比 (事件/秒)')
+    plt.ylabel('事件/秒')
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
     
-    axs[1, 1].set_title('不同速率的延迟分布')
-    axs[1, 1].set_xlabel('目标速率')
-    axs[1, 1].set_ylabel('延迟 (微秒, 对数尺度)')
-    axs[1, 1].legend()
-    axs[1, 1].grid(True)
+    # 在柱状图上添加数值标签
+    for i, v in enumerate(throughputs):
+        plt.text(i, v + 1000, f"{v:,}", ha='center')
     
-    plt.tight_layout()
+    # 2. 延迟对比
+    plt.subplot(2, 2, 2)
+    metrics = ['中位数', '90%', '99%', '99.9%', '最大']
+    baseline_values = [
+        baseline_data['median_latency'],
+        baseline_data['p90_latency'],
+        baseline_data['p99_latency'],
+        baseline_data['p999_latency'],
+        min(baseline_data['max_latency'], 1000)  # 限制最大值以便更好的可视化
+    ]
+    optimized_values = [
+        optimized_data['median_latency'],
+        optimized_data['p90_latency'],
+        optimized_data['p99_latency'],
+        optimized_data['p999_latency'],
+        min(optimized_data['max_latency'], 1000)  # 限制最大值以便更好的可视化
+    ]
     
-    # Save figure
-    output_dir = os.path.join(benchmark_dir, "visualizations")
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    x = np.arange(len(metrics))
+    width = 0.35
     
-    output_file = os.path.join(output_dir, f"performance_{'_'.join(map(str, rates))}.png")
-    plt.savefig(output_file, dpi=150)
-    print(f"图表已保存到: {output_file}")
+    plt.bar(x - width/2, baseline_values, width, label='基线版本', color='blue')
+    plt.bar(x + width/2, optimized_values, width, label='优化版本', color='green')
     
-    # Try to display if not in headless mode
-    try:
-        plt.show()
-    except:
-        pass
+    plt.xlabel('延迟百分位')
+    plt.ylabel('延迟 (微秒)')
+    plt.title('延迟对比')
+    plt.xticks(x, metrics)
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # 3. 延迟分布曲线
+    plt.subplot(2, 2, 3)
+    plt.plot(baseline_percentiles, baseline_latencies, label='基线版本', color='blue')
+    plt.plot(optimized_percentiles, optimized_latencies, label='优化版本', color='green')
+    plt.xlabel('百分位')
+    plt.ylabel('延迟 (微秒)')
+    plt.title('延迟分布曲线')
+    plt.legend()
+    plt.grid(linestyle='--', alpha=0.7)
+    
+    # 4. 资源使用对比
+    plt.subplot(2, 2, 4)
+    resource_metrics = ['CPU利用率 (%)', 'GC暂停 (ms)', '内存使用 (MB)']
+    baseline_resources = [
+        baseline_data['cpu_utilization'],
+        baseline_data['gc_pause'],
+        baseline_data['memory_usage']
+    ]
+    optimized_resources = [
+        optimized_data['cpu_utilization'],
+        optimized_data['gc_pause'],
+        optimized_data['memory_usage']
+    ]
+    
+    x = np.arange(len(resource_metrics))
+    
+    plt.bar(x - width/2, baseline_resources, width, label='基线版本', color='blue')
+    plt.bar(x + width/2, optimized_resources, width, label='优化版本', color='green')
+    
+    plt.xlabel('资源指标')
+    plt.ylabel('值')
+    plt.title('资源使用对比')
+    plt.xticks(x, resource_metrics)
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # 添加总体标题
+    plt.suptitle(f'性能优化对比: {throughput_improvement:.1f}% 吞吐量提升, {latency_improvement:.1f}% 延迟改进', 
+                 fontsize=16)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    
+    # 保存图像
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_path = f'performance-results/comparison_{timestamp}.png'
+    plt.savefig(output_path)
+    print(f"对比图已保存到: {output_path}")
+    
+    # 显示图像
+    plt.show()
 
 def main():
-    benchmark_dir = find_latest_benchmark()
-    print(f"使用最新的基准测试结果: {benchmark_dir}")
+    parser = argparse.ArgumentParser(description='可视化DisruptorX性能测试结果')
+    parser.add_argument('--baseline', help='基线版本结果目录')
+    parser.add_argument('--optimized', help='优化版本结果目录')
     
-    if len(sys.argv) > 1:
-        rate = sys.argv[1]
-        print(f"绘制速率 {rate} 的性能数据")
-        plot_performance(benchmark_dir, rate)
+    args = parser.parse_args()
+    
+    # 如果没有指定目录，查找最新的两个结果目录
+    if not args.baseline or not args.optimized:
+        dirs = sorted(glob.glob('performance-results/*/'), reverse=True)
+        if len(dirs) < 2:
+            print("找不到足够的测试结果目录进行对比")
+            sys.exit(1)
+        baseline_dir = dirs[1]  # 次新的目录作为基线
+        optimized_dir = dirs[0]  # 最新的目录作为优化版本
     else:
-        print("绘制所有速率的性能数据")
-        plot_performance(benchmark_dir)
+        baseline_dir = args.baseline
+        optimized_dir = args.optimized
+    
+    print(f"比较基线版本: {baseline_dir}")
+    print(f"与优化版本: {optimized_dir}")
+    
+    compare_benchmarks(baseline_dir, optimized_dir)
 
 if __name__ == "__main__":
     main() 
