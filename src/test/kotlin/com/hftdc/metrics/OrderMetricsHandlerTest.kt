@@ -65,7 +65,8 @@ class OrderMetricsHandlerTest {
         // Verify that order processing time was recorded
         val histogram = MetricsRegistry.orderProcessingTimeHistogram
             .labels(order.instrumentId, order.type.name.lowercase())
-        assertTrue(histogram.get().count >= 1)
+        val sample = histogram.get()
+        assertTrue(sample.sum > 0, "Histogram should have observations")
     }
     
     @Test
@@ -85,7 +86,8 @@ class OrderMetricsHandlerTest {
         // Verify that order processing time was recorded
         val histogram = MetricsRegistry.orderProcessingTimeHistogram
             .labels(order.instrumentId, order.type.name.lowercase())
-        assertTrue(histogram.get().count >= 1)
+        val sample = histogram.get()
+        assertTrue(sample.sum > 0, "Histogram should have observations")
     }
     
     @Test
@@ -100,7 +102,8 @@ class OrderMetricsHandlerTest {
         // Verify that order processing time was recorded
         val histogram = MetricsRegistry.orderProcessingTimeHistogram
             .labels(order.instrumentId, order.type.name.lowercase())
-        assertTrue(histogram.get().count >= 1)
+        val sample = histogram.get()
+        assertTrue(sample.sum > 0, "Histogram should have observations")
     }
     
     @Test
@@ -149,14 +152,23 @@ class OrderMetricsHandlerTest {
     }
     
     private fun createTestTrade(order: Order, quantity: Long): Trade {
+        val counterpartyOrderId = 555L
+        val counterpartyUserId = 789L
+        
         return Trade(
             id = 789L,
-            buyOrderId = if (order.side == OrderSide.BUY) order.id else 555L,
-            sellOrderId = if (order.side == OrderSide.SELL) order.id else 555L,
+            buyOrderId = if (order.side == OrderSide.BUY) order.id else counterpartyOrderId,
+            sellOrderId = if (order.side == OrderSide.SELL) order.id else counterpartyOrderId,
+            buyUserId = if (order.side == OrderSide.BUY) order.userId else counterpartyUserId,
+            sellUserId = if (order.side == OrderSide.SELL) order.userId else counterpartyUserId,
             instrumentId = order.instrumentId,
             price = order.price ?: 50000L,
             quantity = quantity,
-            timestamp = Instant.now().toEpochMilli()
+            timestamp = Instant.now().toEpochMilli(),
+            makerOrderId = counterpartyOrderId, // Assume counterparty is maker for simplicity
+            takerOrderId = order.id, // Assume test order is taker
+            buyFee = 10,
+            sellFee = 10
         )
     }
 } 

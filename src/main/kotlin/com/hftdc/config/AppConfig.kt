@@ -14,14 +14,18 @@ data class AppConfig(
     val engine: EngineConfig,
     val recovery: RecoveryConfig,
     val api: ApiConfig,
-    val monitoring: MonitoringConfig
+    val monitoring: MonitoringConfig,
+    val performance: PerformanceConfig? = null,
+    val security: SecurityConfig? = null,
+    val environment: String = "development"
 ) {
     companion object {
         /**
          * 从配置文件加载配置
          */
         fun load(): AppConfig {
-            val config = loadConfig()
+            val environment = System.getProperty("env", "development")
+            val config = loadConfig(environment)
             return AppConfig(
                 disruptor = DisruptorConfig.fromConfig(config.getConfig("disruptor")),
                 akka = AkkaConfig.fromConfig(config.getConfig("akka")),
@@ -29,20 +33,38 @@ data class AppConfig(
                 engine = EngineConfig.fromConfig(config.getConfig("engine")),
                 recovery = RecoveryConfig.fromConfig(config.getConfig("recovery")),
                 api = ApiConfig.fromConfig(config.getConfig("api")),
-                monitoring = MonitoringConfig.fromConfig(config.getConfig("monitoring"))
+                monitoring = MonitoringConfig.fromConfig(config.getConfig("monitoring")),
+                performance = if (config.hasPath("performance")) PerformanceConfig.fromConfig(config.getConfig("performance")) else null,
+                security = if (config.hasPath("security")) SecurityConfig.fromConfig(config.getConfig("security")) else null,
+                environment = environment
             )
         }
 
         /**
          * 加载配置文件
          */
-        private fun loadConfig(): Config {
+        private fun loadConfig(environment: String): Config {
+            // 首先检查是否通过系统属性指定了配置文件
             val configFile = System.getProperty("config.file")
-            return if (configFile != null) {
-                ConfigFactory.parseFile(File(configFile)).withFallback(ConfigFactory.load())
+            val config = if (configFile != null) {
+                ConfigFactory.parseFile(File(configFile))
             } else {
-                ConfigFactory.load()
+                // 否则尝试根据环境加载特定配置
+                val envConfig = try {
+                    ConfigFactory.load("application-$environment.conf")
+                } catch (e: Exception) {
+                    // 如果特定环境配置不存在，回退到默认配置
+                    ConfigFactory.empty()
+                }
+                
+                // 加载默认配置，并与环境特定配置合并
+                val defaultConfig = ConfigFactory.load("application.conf")
+                envConfig.withFallback(defaultConfig)
             }
+            
+            return ConfigFactory.systemProperties()
+                .withFallback(config)
+                .resolve()
         }
     }
 }
@@ -171,6 +193,48 @@ data class MonitoringConfig(
             prometheusEnabled = config.getBoolean("prometheus-enabled"),
             prometheusPort = config.getInt("prometheus-port"),
             metricsIntervalSeconds = config.getInt("metrics-interval-seconds")
+        )
+    }
+}
+
+/**
+ * 性能优化配置
+ */
+data class PerformanceConfig(
+    val jvmOptimizationsEnabled: Boolean,
+    val gcLogDir: String,
+    val offHeapEnabled: Boolean,
+    val offHeapSizeMb: Int
+) {
+    companion object {
+        fun fromConfig(config: Config): PerformanceConfig = PerformanceConfig(
+            jvmOptimizationsEnabled = config.getBoolean("jvm-optimizations-enabled"),
+            gcLogDir = config.getString("gc-log-dir"),
+            offHeapEnabled = config.getBoolean("off-heap-enabled"),
+            offHeapSizeMb = config.getInt("off-heap-size-mb")
+        )
+    }
+}
+
+/**
+ * 安全配置
+ */
+data class SecurityConfig(
+    val sslEnabled: Boolean,
+    val sslCertificate: String,
+    val sslPrivateKey: String,
+    val apiKeyAuthEnabled: Boolean,
+    val ipWhitelistEnabled: Boolean,
+    val allowedIps: List<String>
+) {
+    companion object {
+        fun fromConfig(config: Config): SecurityConfig = SecurityConfig(
+            sslEnabled = config.getBoolean("ssl-enabled"),
+            sslCertificate = config.getString("ssl-certificate"),
+            sslPrivateKey = config.getString("ssl-private-key"),
+            apiKeyAuthEnabled = config.getBoolean("api-key-auth-enabled"),
+            ipWhitelistEnabled = config.getBoolean("ip-whitelist-enabled"),
+            allowedIps = config.getStringList("allowed-ips")
         )
     }
 } 
