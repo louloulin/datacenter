@@ -11,7 +11,8 @@ data class AppConfig(
     val disruptor: DisruptorConfig,
     val akka: AkkaConfig,
     val db: DbConfig,
-    val engine: EngineConfig
+    val engine: EngineConfig,
+    val recovery: RecoveryConfig
 ) {
     companion object {
         /**
@@ -23,7 +24,8 @@ data class AppConfig(
                 disruptor = DisruptorConfig.fromConfig(config.getConfig("disruptor")),
                 akka = AkkaConfig.fromConfig(config.getConfig("akka")),
                 db = DbConfig.fromConfig(config.getConfig("db")),
-                engine = EngineConfig.fromConfig(config.getConfig("engine"))
+                engine = EngineConfig.fromConfig(config.getConfig("engine")),
+                recovery = RecoveryConfig.fromConfig(config.getConfig("recovery"))
             )
         }
 
@@ -110,6 +112,25 @@ data class EngineConfig(
             maxInstruments = config.getInt("max-instruments"),
             snapshotInterval = config.getInt("snapshot-interval"),
             cleanupIdleActorsAfterMinutes = config.getInt("cleanup-idle-actors-after-minutes")
+        )
+    }
+}
+
+/**
+ * 恢复服务配置
+ */
+data class RecoveryConfig(
+    val enabled: Boolean,
+    val includeEventsBeforeSnapshot: Boolean,
+    val eventsBeforeSnapshotTimeWindowMs: Long,
+    val autoStartSnapshots: Boolean
+) {
+    companion object {
+        fun fromConfig(config: Config): RecoveryConfig = RecoveryConfig(
+            enabled = config.getBoolean("enabled"),
+            includeEventsBeforeSnapshot = config.getBoolean("include-events-before-snapshot"),
+            eventsBeforeSnapshotTimeWindowMs = config.getLong("events-before-snapshot-time-window-ms"),
+            autoStartSnapshots = config.getBoolean("auto-start-snapshots")
         )
     }
 } 

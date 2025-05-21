@@ -97,6 +97,7 @@ data class OrderCanceledEvent(
     override val eventId: Long,
     override val timestamp: Long = Instant.now().toEpochMilli(),
     val orderId: Long,
+    val instrumentId: String? = null,
     val reason: String? = null
 ) : JournalEvent {
     override val type: EventType = EventType.ORDER_CANCELED

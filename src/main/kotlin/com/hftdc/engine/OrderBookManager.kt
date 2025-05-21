@@ -12,7 +12,11 @@ private val logger = KotlinLogging.logger {}
 /**
  * 订单簿管理器 - 管理所有交易品种的订单簿
  */
-class OrderBookManager(private val maxInstruments: Int, private val snapshotIntervalMs: Long) {
+class OrderBookManager(
+    private val maxInstruments: Int, 
+    private val snapshotIntervalMs: Long,
+    private val enableInternalSnapshots: Boolean = false // 是否使用内部快照机制，默认false，推荐使用SnapshotManager代替
+) {
     // 使用ConcurrentHashMap存储所有订单簿，以instrumentId为key
     private val orderBooks = ConcurrentHashMap<String, OrderBook>()
     
@@ -21,16 +25,17 @@ class OrderBookManager(private val maxInstruments: Int, private val snapshotInte
     
     init {
         // 注册定期任务
-        if (snapshotIntervalMs > 0) {
+        if (enableInternalSnapshots && snapshotIntervalMs > 0) {
             scheduler.scheduleAtFixedRate(
                 { createSnapshots() },
                 snapshotIntervalMs,
                 snapshotIntervalMs,
                 TimeUnit.MILLISECONDS
             )
+            logger.info { "订单簿管理器已启动，最大交易品种数: $maxInstruments, 快照间隔: ${snapshotIntervalMs}ms" }
+        } else {
+            logger.info { "订单簿管理器已启动，最大交易品种数: $maxInstruments, 内部快照功能已禁用" }
         }
-        
-        logger.info { "订单簿管理器已启动，最大交易品种数: $maxInstruments, 快照间隔: ${snapshotIntervalMs}ms" }
     }
     
     /**
@@ -91,6 +96,24 @@ class OrderBookManager(private val maxInstruments: Int, private val snapshotInte
      */
     fun getTotalOrderCount(): Int {
         return orderBooks.values.sumOf { it.getPendingOrdersCount() }
+    }
+    
+    /**
+     * 获取所有活跃的交易品种ID
+     * 
+     * 活跃的定义：
+     * 1. 已创建订单簿
+     * 2. 有挂单 或 过去24小时内有交易
+     */
+    fun getActiveInstrumentIds(): Set<String> {
+        return orderBooks.keys.toSet()
+    }
+    
+    /**
+     * 检查交易品种是否存在
+     */
+    fun hasInstrument(instrumentId: String): Boolean {
+        return orderBooks.containsKey(instrumentId)
     }
     
     /**

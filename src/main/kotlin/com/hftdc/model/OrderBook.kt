@@ -60,30 +60,41 @@ class OrderBook(val instrumentId: String) {
     /**
      * 取消订单
      */
-    fun cancelOrder(orderId: Long): Boolean {
-        val order = ordersById[orderId] ?: return false
+    fun cancelOrder(orderId: Long): Order? {
+        // 获取订单
+        val order = ordersById[orderId] ?: return null
         
+        // 检查订单是否可以取消
         if (!order.canBeCanceled()) {
-            return false
+            return null
         }
         
-        // 从订单簿中移除
-        val priceLevel = order.price ?: return false
-        val orderMap = if (order.side == OrderSide.BUY) buyOrders else sellOrders
+        // 将订单从价格级别中移除
+        val price = order.price ?: return null
+        val side = order.side
+        val orders = if (side == OrderSide.BUY) buyOrders[price] else sellOrders[price]
         
-        orderMap[priceLevel]?.let { orders ->
-            orders.removeIf { it.id == orderId }
-            if (orders.isEmpty()) {
-                orderMap.remove(priceLevel)
+        orders?.remove(order)
+        
+        // 如果价格级别为空，则移除该价格级别
+        if (orders?.isEmpty() == true) {
+            if (side == OrderSide.BUY) {
+                buyOrders.remove(price)
+            } else {
+                sellOrders.remove(price)
             }
         }
         
-        // 更新订单状态
+        // 更新订单状态为已取消
         val canceledOrder = order.withUpdatedStatus(OrderStatus.CANCELED)
+        
+        // 更新订单缓存
         ordersById[orderId] = canceledOrder
         
+        // 更新最后更新时间
         lastUpdated = Instant.now().toEpochMilli()
-        return true
+        
+        return canceledOrder
     }
     
     /**

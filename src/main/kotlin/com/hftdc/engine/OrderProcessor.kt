@@ -1,5 +1,9 @@
 package com.hftdc.engine
 
+import com.hftdc.journal.JournalEvent
+import com.hftdc.journal.JournalService
+import com.hftdc.journal.OrderSubmittedEvent
+import com.hftdc.journal.TradeCreatedEvent
 import com.lmax.disruptor.EventFactory
 import com.lmax.disruptor.EventHandler
 import com.lmax.disruptor.RingBuffer
@@ -12,6 +16,7 @@ import com.hftdc.model.Order
 import com.hftdc.model.OrderStatus
 import mu.KotlinLogging
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
 
@@ -20,11 +25,13 @@ private val logger = KotlinLogging.logger {}
  */
 data class OrderEvent(
     var order: Order? = null,
-    var timestamp: Long = 0
+    var timestamp: Long = 0,
+    var trades: List<com.hftdc.model.Trade> = emptyList()
 ) {
     fun clear() {
         order = null
         timestamp = 0
+        trades = emptyList()
     }
 }
 
@@ -84,6 +91,9 @@ class OrderMatchHandler(
         val orderBook = orderBookManager.getOrderBook(order.instrumentId)
         val trades = orderBook.addOrder(order)
         
+        // 存储交易到事件对象，以便下一阶段处理
+        event.trades = trades
+        
         // 处理交易结果
         if (trades.isNotEmpty()) {
             logger.info { "订单 ${order.id} 产生了 ${trades.size} 笔交易" }
@@ -104,14 +114,40 @@ class OrderMatchHandler(
 /**
  * 日志记录处理器 - 第三阶段处理，记录订单处理日志
  */
-class JournalHandler : EventHandler<OrderEvent> {
+class JournalHandler(private val journalService: JournalService?) : EventHandler<OrderEvent> {
+    // 事件ID计数器
+    private val eventIdCounter = AtomicLong(0)
+    
     override fun onEvent(event: OrderEvent, sequence: Long, endOfBatch: Boolean) {
         val order = event.order ?: return
         
-        // 在这里实现日志记录逻辑
-        logger.debug { "记录订单日志: $order" }
-        
-        // TODO: 将订单和交易写入持久化存储
+        if (journalService != null) {
+            try {
+                // 记录订单提交事件
+                val orderSubmittedEvent = OrderSubmittedEvent(
+                    eventId = eventIdCounter.incrementAndGet(),
+                    timestamp = event.timestamp,
+                    order = order
+                )
+                journalService.journal(orderSubmittedEvent)
+                
+                // 记录交易事件
+                event.trades.forEach { trade ->
+                    val tradeCreatedEvent = TradeCreatedEvent(
+                        eventId = eventIdCounter.incrementAndGet(),
+                        timestamp = event.timestamp,
+                        trade = trade
+                    )
+                    journalService.journal(tradeCreatedEvent)
+                }
+                
+                logger.debug { "已记录订单日志: 订单ID=${order.id}, 交易数量=${event.trades.size}" }
+            } catch (e: Exception) {
+                logger.error(e) { "记录订单日志失败: ${order.id}" }
+            }
+        } else {
+            logger.debug { "跳过日志记录，未配置日志服务" }
+        }
         
         // 清空事件，以便重用
         event.clear()
@@ -127,7 +163,8 @@ class OrderProcessor(
     private val producerType: ProducerType = ProducerType.MULTI,
     private val orderBookManager: OrderBookManager,
     private val marketDataProcessor: com.hftdc.market.MarketDataProcessor? = null,
-    private val riskManager: com.hftdc.risk.RiskManager? = null
+    private val riskManager: com.hftdc.risk.RiskManager? = null,
+    private val journalService: JournalService? = null
 ) {
     private val disruptor: Disruptor<OrderEvent>
     private val ringBuffer: RingBuffer<OrderEvent>
@@ -156,7 +193,7 @@ class OrderProcessor(
         
         disruptor.handleEventsWith(riskHandler)
             .then(OrderMatchHandler(orderBookManager, marketDataProcessor))
-            .then(JournalHandler())
+            .then(JournalHandler(journalService))
         
         // 启动Disruptor
         ringBuffer = disruptor.start()

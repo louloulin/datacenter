@@ -58,7 +58,7 @@ class OrderBookRestoreTest {
         assertEquals(4, allOrders.size) // 2个买单 + 2个卖单
         
         // 验证占位订单的特性
-        val placeholderOrders = allOrders.filter { it is Order && it.isPlaceholder }
+        val placeholderOrders = allOrders.filter { it.isPlaceholder }
         assertEquals(4, placeholderOrders.size) // 所有订单都应该是占位订单
     }
     

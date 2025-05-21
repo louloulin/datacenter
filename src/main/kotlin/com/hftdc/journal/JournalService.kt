@@ -22,6 +22,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.stream.Collectors
 
 private val logger = KotlinLogging.logger {}
 
@@ -43,6 +44,11 @@ interface JournalService {
      * 获取最新快照
      */
     fun getLatestSnapshot(instrumentId: String): JournalSnapshot?
+    
+    /**
+     * 获取所有快照的品种ID
+     */
+    fun getSnapshotInstrumentIds(): Set<String>
     
     /**
      * 获取指定时间范围内的事件
@@ -302,6 +308,31 @@ class FileJournalService(
         }
     }
     
+    override fun getSnapshotInstrumentIds(): Set<String> {
+        // 从内存缓存获取
+        val cachedIds = latestSnapshots.keys
+        if (cachedIds.isNotEmpty()) {
+            return cachedIds.toSet()
+        }
+        
+        // 从文件系统获取
+        try {
+            val directory = Paths.get(snapshotDir)
+            if (!Files.exists(directory)) {
+                return emptySet()
+            }
+            
+            return Files.list(directory)
+                .map { it.fileName.toString() }
+                .filter { it.endsWith(".snapshot") }
+                .map { it.substringBefore("_") }
+                .collect(Collectors.toSet())
+        } catch (e: Exception) {
+            logger.error(e) { "获取快照品种ID失败" }
+            return emptySet()
+        }
+    }
+    
     override fun getEvents(
         instrumentId: String,
         startTime: Long,
@@ -384,18 +415,29 @@ class InMemoryJournalService : JournalService {
     private val snapshots = ConcurrentHashMap<String, JournalSnapshot>()
     private val eventIdCounter = AtomicLong(0)
     
+    // 存储订单ID到品种ID的映射，用于处理取消订单事件
+    private val orderIdToInstrumentId = ConcurrentHashMap<Long, String>()
+    
     override fun journal(event: JournalEvent) {
         val instrumentId = when (event) {
-            is OrderSubmittedEvent -> event.order.instrumentId
+            is OrderSubmittedEvent -> {
+                // 记录订单ID与品种ID的关系
+                orderIdToInstrumentId[event.order.id] = event.order.instrumentId
+                event.order.instrumentId
+            }
             is OrderAcceptedEvent -> event.instrumentId
             is OrderRejectedEvent -> "system"
             is OrderExecutedEvent -> "system"
-            is OrderCanceledEvent -> "system"
+            is OrderCanceledEvent -> {
+                // 对于取消订单事件，使用提供的品种ID或从映射中获取
+                event.instrumentId ?: orderIdToInstrumentId[event.orderId] ?: "system"
+            }
             is TradeCreatedEvent -> event.trade.instrumentId
             is SnapshotCreatedEvent -> event.instrumentId
             else -> "system"
         }
         
+        println("InMemoryJournalService: 添加事件 - 类型: ${event.type}, instrumentId: $instrumentId, eventId: ${event.eventId}")
         events.computeIfAbsent(instrumentId) { mutableListOf() }.add(event)
     }
     
@@ -425,16 +467,37 @@ class InMemoryJournalService : JournalService {
         return snapshots[instrumentId]
     }
     
+    override fun getSnapshotInstrumentIds(): Set<String> {
+        return snapshots.keys
+    }
+    
     override fun getEvents(
         instrumentId: String,
         startTime: Long,
         endTime: Long,
         types: Set<EventType>?
     ): List<JournalEvent> {
-        return events[instrumentId]?.filter { event ->
-            event.timestamp in startTime..endTime &&
-            (types == null || event.type in types)
+        println("InMemoryJournalService.getEvents: instrumentId=$instrumentId, startTime=$startTime, endTime=$endTime, types=$types")
+        println("InMemoryJournalService.getEvents: 事件映射中的所有键: ${events.keys.joinToString()}")
+        
+        val result = events[instrumentId]
+        println("InMemoryJournalService.getEvents: 找到事件列表: ${result?.size ?: 0}")
+        
+        val filteredResult = result?.filter { event ->
+            val matchesTime = event.timestamp >= startTime && event.timestamp <= endTime
+            val matchesType = types == null || event.type in types
+            
+            // 调试信息
+            if (!matchesTime || !matchesType) {
+                println("  排除事件 ${event.eventId}: timestamp=${event.timestamp}, type=${event.type}, " +
+                       "matchesTime=$matchesTime (startTime=$startTime, endTime=$endTime), matchesType=$matchesType")
+            }
+            
+            matchesTime && matchesType
         } ?: emptyList()
+        
+        println("InMemoryJournalService.getEvents: 过滤后事件数量: ${filteredResult.size}")
+        return filteredResult
     }
     
     override fun shutdown() {
