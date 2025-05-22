@@ -13,7 +13,12 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Tag
-import org.hdrhistogram.Histogram
+import org.HdrHistogram.Histogram
+import com.hftdc.disruptorx.util.EventObjectPool
+import com.hftdc.disruptorx.util.OffHeapBuffer
+import com.hftdc.disruptorx.util.PaddedSequence
+import com.hftdc.disruptorx.util.ThreadAffinity
+import com.lmax.disruptor.Sequence
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
@@ -623,5 +628,17 @@ class ComponentBenchmarkTest {
         
         executor.shutdown()
         executor.awaitTermination(1, TimeUnit.MINUTES)
+    }
+
+    private fun getIterator(): Iterator<TestEvent> {
+        val list = ArrayList<TestEvent>()
+        list.add(TestEvent())
+        return list.iterator()
+    }
+
+    private fun handleStringBuilder(sb: StringBuilder, index: Int, value: Char) {
+        if (index >= 0 && index < sb.length) {
+            sb.setCharAt(index, value)
+        }
     }
 } 

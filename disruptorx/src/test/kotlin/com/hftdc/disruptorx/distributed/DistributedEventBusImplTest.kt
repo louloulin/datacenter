@@ -3,6 +3,7 @@ package com.hftdc.disruptorx.distributed
 import com.hftdc.disruptorx.api.NodeInfo
 import com.hftdc.disruptorx.api.NodeRole
 import com.hftdc.disruptorx.api.NodeStatus
+import com.hftdc.disruptorx.api.ReplicationMode
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every

@@ -1,7 +1,7 @@
 package com.hftdc.disruptorx.benchmark
 
 import com.hftdc.disruptorx.BenchmarkMessage
-import org.hdrhistogram.Histogram
+import org.HdrHistogram.Histogram
 import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 

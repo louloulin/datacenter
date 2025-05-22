@@ -1,6 +1,6 @@
 package com.hftdc.disruptorx.benchmark
 
-import org.hdrhistogram.Histogram
+import org.HdrHistogram.Histogram
 
 /**
  * 基准测试结果

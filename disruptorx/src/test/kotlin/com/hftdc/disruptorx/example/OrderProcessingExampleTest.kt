@@ -2,6 +2,7 @@ package com.hftdc.disruptorx.example
 
 import com.hftdc.disruptorx.DisruptorX
 import com.hftdc.disruptorx.DisruptorXConfig
+import com.hftdc.disruptorx.api.NodeRole
 import com.hftdc.disruptorx.api.WorkflowStatus
 import io.mockk.every
 import io.mockk.mockk
@@ -21,8 +22,10 @@ class OrderProcessingExampleTest {
 
     private val node = DisruptorX.createNode(
         DisruptorXConfig(
+            nodeId = "test-node",
             host = "localhost",
-            port = 9091 // 使用不同端口避免和其他测试冲突
+            port = 9091, // 使用不同端口避免和其他测试冲突
+            nodeRole = NodeRole.COORDINATOR
         )
     )
     

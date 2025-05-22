@@ -1,7 +1,14 @@
 package com.hftdc.disruptorx
 
+import com.hftdc.disruptorx.api.EventHandler
 import com.hftdc.disruptorx.api.NodeRole
+import com.hftdc.disruptorx.api.Workflow
+import com.hftdc.disruptorx.api.WorkflowSink
+import com.hftdc.disruptorx.api.WorkflowSource
+import com.hftdc.disruptorx.api.WorkflowStage
+import com.hftdc.disruptorx.api.WorkflowStatus
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * DisruptorX stub implementation for tests
@@ -16,10 +23,10 @@ object DisruptorX {
  * DisruptorX configuration stub for tests
  */
 data class DisruptorXConfig(
-    val nodeId: String,
-    val host: String,
-    val port: Int,
-    val nodeRole: NodeRole,
+    val nodeId: String = "test-node",
+    val host: String = "localhost",
+    val port: Int = 9090,
+    val nodeRole: NodeRole = NodeRole.COORDINATOR,
     val seedNodes: List<String> = emptyList()
 )
 
@@ -56,11 +63,35 @@ class DisruptorXNode(val config: DisruptorXConfig) {
      * Workflow manager stub for tests
      */
     class WorkflowManager {
-        fun createWorkflow(id: String): Workflow {
-            return Workflow(id)
+        private val workflows = ConcurrentHashMap<String, Workflow>()
+        private val workflowStatuses = ConcurrentHashMap<String, WorkflowStatus>()
+        
+        fun createWorkflow(id: String): WorkflowImpl {
+            val workflow = WorkflowImpl(id)
+            workflows[id] = workflow
+            workflowStatuses[id] = WorkflowStatus.CREATED
+            return workflow
+        }
+        
+        fun register(workflow: Workflow) {
+            workflows[workflow.id] = workflow
+            workflowStatuses[workflow.id] = WorkflowStatus.CREATED
+        }
+        
+        fun start(id: String) {
+            workflowStatuses[id] = WorkflowStatus.RUNNING
+        }
+        
+        fun stop(id: String) {
+            workflowStatuses[id] = WorkflowStatus.STOPPED
+        }
+        
+        fun status(id: String): WorkflowStatus {
+            return workflowStatuses[id] ?: WorkflowStatus.UNKNOWN
         }
         
         fun startWorkflow(id: String): CompletableFuture<Void> {
+            start(id)
             return CompletableFuture.completedFuture(null)
         }
     }
@@ -69,9 +100,45 @@ class DisruptorXNode(val config: DisruptorXConfig) {
 /**
  * Workflow stub for tests
  */
-class Workflow(val id: String) {
+class WorkflowImpl(override val id: String, override val name: String = "Test Workflow") : Workflow {
+    // Simplified workflow structure for tests
+    override val source = SourceImpl("orders")
+    override val sink = SinkImpl("processed-orders")
+    override val stages = listOf(
+        StageImpl("validation", 1),
+        StageImpl("enrichment", 1),
+        StageImpl("processing", 4),
+        StageImpl("notification", 1)
+    )
+    
     fun start(): CompletableFuture<Void> {
         return CompletableFuture.completedFuture(null)
+    }
+    
+    class SourceImpl(override val topic: String) : WorkflowSource {
+        fun partitionBy(partitioner: (Any) -> Int) {
+            // Stub implementation
+        }
+    }
+    
+    class SinkImpl(override val topic: String) : WorkflowSink {
+        // Stub implementation
+    }
+    
+    class StageImpl(override val id: String, override val parallelism: Int) : WorkflowStage {
+        private var handlerFn: (suspend (Any) -> Unit)? = null
+        
+        fun handler(handler: suspend (Any) -> Unit) {
+            handlerFn = handler
+        }
+        
+        override fun getHandler(): EventHandler<Any> {
+            return object : EventHandler<Any> {
+                override fun onEvent(event: Any, sequence: Long, endOfBatch: Boolean) {
+                    // In a real implementation, this would execute the handler function
+                }
+            }
+        }
     }
 }
 
@@ -95,4 +162,12 @@ data class BenchmarkMessage(
     override fun hashCode(): Int {
         return payload.contentHashCode()
     }
+}
+
+/**
+ * NodeRole enum for tests
+ */
+enum class NodeRole {
+    COORDINATOR,
+    WORKER
 } 
