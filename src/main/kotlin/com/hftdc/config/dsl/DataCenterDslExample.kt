@@ -46,6 +46,18 @@ class DataCenterConfig {
     fun server(init: ServerConfig.() -> Unit) {
         server = ServerConfig().apply(init)
     }
+    
+    fun dataStorage(init: DataStorageConfig.() -> Unit) {
+        dataStorage = DataStorageConfig().apply(init)
+    }
+    
+    fun cluster(init: ClusterConfig.() -> Unit) {
+        cluster = ClusterConfig().apply(init)
+    }
+    
+    fun analytics(init: AnalyticsConfig.() -> Unit) {
+        analytics = AnalyticsConfig().apply(init)
+    }
 }
 
 /**
@@ -231,27 +243,6 @@ class QueryConfig {
  */
 fun tradingDataCenter(init: DataCenterConfig.() -> Unit): DataCenterConfig {
     return DataCenterConfig().apply(init)
-}
-
-/**
- * 数据存储配置DSL函数
- */
-fun DataCenterConfig.dataStorage(init: DataStorageConfig.() -> Unit) {
-    dataStorage = DataStorageConfig().apply(init)
-}
-
-/**
- * 集群配置DSL函数
- */
-fun DataCenterConfig.cluster(init: ClusterConfig.() -> Unit) {
-    cluster = ClusterConfig().apply(init)
-}
-
-/**
- * 分析引擎配置DSL函数
- */
-fun DataCenterConfig.analytics(init: AnalyticsConfig.() -> Unit) {
-    analytics = AnalyticsConfig().apply(init)
 }
 
 /**

@@ -119,10 +119,10 @@ class DisruptorXBenchmark {
                     consumerExecutor.submit {
                         try {
                             // 订阅消息
-                            node.eventBus.subscribe<BenchmarkMessage>(testTopic) { message ->
+                            node.eventBus.subscribe(testTopic) { message ->
                                 try {
                                     activeCounter.incrementAndGet()
-                                    MessageHandler(latencyRecorder).handleMessage(message)
+                                    MessageHandler(latencyRecorder).handleMessage(message as BenchmarkMessage)
                                     messageCounter.incrementAndGet()
                                 } catch (e: Exception) {
                                     errorCounter.incrementAndGet()
@@ -294,7 +294,7 @@ class DisruptorXBenchmark {
                 nodeId = nodeId,
                 host = "localhost",
                 port = port,
-                nodeRole = if (i == 0) NodeRole.LEADER else NodeRole.FOLLOWER,
+                nodeRole = if (i == 0) NodeRole.COORDINATOR else NodeRole.WORKER,
                 seedNodes = listOf("localhost:$basePort")
             )
             

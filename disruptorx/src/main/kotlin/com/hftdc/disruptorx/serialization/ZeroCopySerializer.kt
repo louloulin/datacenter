@@ -56,7 +56,7 @@ class ZeroCopySerializer {
         // 使用类型处理器序列化对象
         val handler = getTypeHandler(obj.javaClass)
         @Suppress("UNCHECKED_CAST")
-        (handler as TypeHandler<T?>).write(context, obj)
+        (handler as TypeHandler<T>).write(context, obj)
         
         // 准备返回
         buffer.flip()
@@ -100,7 +100,7 @@ class ZeroCopySerializer {
         // 使用类型处理器序列化增量
         val handler = getTypeHandler(obj.javaClass)
         @Suppress("UNCHECKED_CAST")
-        (handler as DeltaTypeHandler<T?>).writeDelta(context, obj, baseline)
+        (handler as DeltaTypeHandler<T>).writeDelta(context, obj, baseline)
         
         // 准备返回
         buffer.flip()
@@ -124,54 +124,54 @@ class ZeroCopySerializer {
         
         // 使用类型处理器反序列化增量
         val handler = getTypeHandler(type)
-        return (handler as DeltaTypeHandler<T?>).readDelta(context, baseline)
+        return (handler as DeltaTypeHandler<T>).readDelta(context, baseline)
     }
     
     /**
      * 获取类型的处理器，如果不存在则创建
      */
-    private fun <T : Any> getTypeHandler(type: Class<T>): TypeHandler<T?> {
+    private fun <T : Any> getTypeHandler(type: Class<T>): TypeHandler<T> {
         @Suppress("UNCHECKED_CAST")
         return typeHandlers.computeIfAbsent(type) { 
-            createTypeHandler<T?>(it as Class<T>)
-        } as TypeHandler<T?>
+            createTypeHandler<T>(it as Class<T>)
+        } as TypeHandler<T>
     }
     
     /**
      * 创建类型的处理器
      */
-    private fun <T : Any> createTypeHandler(type: Class<T>): TypeHandler<T?> {
+    private fun <T : Any> createTypeHandler(type: Class<T>): TypeHandler<T> {
         // 检查内置处理器
         when {
             type == String::class.java -> 
                 @Suppress("UNCHECKED_CAST")
-                return StringTypeHandler() as TypeHandler<T?>
+                return StringTypeHandler() as TypeHandler<T>
             type == Int::class.javaObjectType || type == Int::class.javaPrimitiveType -> 
                 @Suppress("UNCHECKED_CAST")
-                return IntTypeHandler() as TypeHandler<T?>
+                return IntTypeHandler() as TypeHandler<T>
             type == Long::class.javaObjectType || type == Long::class.javaPrimitiveType -> 
                 @Suppress("UNCHECKED_CAST")
-                return LongTypeHandler() as TypeHandler<T?>
+                return LongTypeHandler() as TypeHandler<T>
             type == Double::class.javaObjectType || type == Double::class.javaPrimitiveType -> 
                 @Suppress("UNCHECKED_CAST")
-                return DoubleTypeHandler() as TypeHandler<T?>
+                return DoubleTypeHandler() as TypeHandler<T>
             type == Boolean::class.javaObjectType || type == Boolean::class.javaPrimitiveType -> 
                 @Suppress("UNCHECKED_CAST")
-                return BooleanTypeHandler() as TypeHandler<T?>
+                return BooleanTypeHandler() as TypeHandler<T>
             type.isArray -> 
                 @Suppress("UNCHECKED_CAST")
-                return ArrayTypeHandler<Any?>(type.componentType) as TypeHandler<T?>
+                return ArrayTypeHandler<Any>(type.componentType) as TypeHandler<T>
             List::class.java.isAssignableFrom(type) -> 
                 @Suppress("UNCHECKED_CAST")
-                return ListTypeHandler() as TypeHandler<T?>
+                return ListTypeHandler() as TypeHandler<T>
             Map::class.java.isAssignableFrom(type) -> 
                 @Suppress("UNCHECKED_CAST")
-                return MapTypeHandler() as TypeHandler<T?>
+                return MapTypeHandler() as TypeHandler<T>
         }
         
         // 创建自定义类型处理器
         @Suppress("UNCHECKED_CAST")
-        return ObjectTypeHandler<T?>(type) as TypeHandler<T?>
+        return ObjectTypeHandler<T>(type) as TypeHandler<T>
     }
     
     /**
@@ -232,7 +232,7 @@ class ZeroCopySerializer {
     /**
      * 类型处理器接口
      */
-    interface TypeHandler<T?> {
+    interface TypeHandler<T> {
         fun write(context: SerializationContext, value: T)
         fun read(context: DeserializationContext): T
     }
@@ -240,7 +240,7 @@ class ZeroCopySerializer {
     /**
      * 支持增量序列化的类型处理器接口
      */
-    interface DeltaTypeHandler<T?> : TypeHandler<T?> {
+    interface DeltaTypeHandler<T> : TypeHandler<T> {
         fun writeDelta(context: SerializationContext, value: T, baseline: T)
         fun readDelta(context: DeserializationContext, baseline: T): T
     }
@@ -257,7 +257,7 @@ class ZeroCopySerializer {
             }
             
             // 存储引用
-            if (value != null) { context.objectReferences[value] = context.currentPosition }
+            context.objectReferences[value] = context.currentPosition
             
             // 写入字符串长度
             val bytes = value.toByteArray(Charsets.UTF_8)
@@ -353,10 +353,114 @@ class ZeroCopySerializer {
     }
     
     /**
+     * 列表类型处理器
+     */
+    inner class ListTypeHandler : TypeHandler<List<Any>> {
+        override fun write(context: SerializationContext, value: List<Any>) {
+            // 写入列表大小
+            context.buffer.putInt(value.size)
+            context.currentPosition += 4
+            
+            // 写入元素类型和值
+            for (element in value) {
+                val elementType = element.javaClass.name
+                writeString(context, elementType)
+                
+                val handler = getTypeHandler(element.javaClass)
+                @Suppress("UNCHECKED_CAST")
+                (handler as TypeHandler<Any>).write(context, element)
+            }
+        }
+        
+        @Suppress("UNCHECKED_CAST")
+        override fun read(context: DeserializationContext): List<Any> {
+            // 读取列表大小
+            val size = context.buffer.getInt()
+            context.currentPosition += 4
+            
+            // 创建列表
+            val list = ArrayList<Any>(size)
+            
+            // 读取元素
+            for (i in 0 until size) {
+                val elementType = readString(context)
+                val type = Class.forName(elementType)
+                
+                val handler = getTypeHandler(type)
+                val element = handler.read(context) as Any
+                list.add(element)
+            }
+            
+            return list
+        }
+    }
+    
+    /**
+     * 映射类型处理器
+     */
+    inner class MapTypeHandler : TypeHandler<Map<Any, Any>> {
+        override fun write(context: SerializationContext, value: Map<Any, Any>) {
+            // 写入映射大小
+            context.buffer.putInt(value.size)
+            context.currentPosition += 4
+            
+            // 写入键值对
+            for ((key, mapValue) in value) {
+                // 写入键类型和值
+                val keyType = key.javaClass.name
+                writeString(context, keyType)
+                
+                val keyHandler = getTypeHandler(key.javaClass)
+                @Suppress("UNCHECKED_CAST")
+                (keyHandler as TypeHandler<Any>).write(context, key)
+                
+                // 写入值类型和值
+                val valueType = mapValue.javaClass.name
+                writeString(context, valueType)
+                
+                val valueHandler = getTypeHandler(mapValue.javaClass)
+                @Suppress("UNCHECKED_CAST")
+                (valueHandler as TypeHandler<Any>).write(context, mapValue)
+            }
+        }
+        
+        @Suppress("UNCHECKED_CAST")
+        override fun read(context: DeserializationContext): Map<Any, Any> {
+            // 读取映射大小
+            val size = context.buffer.getInt()
+            context.currentPosition += 4
+            
+            // 创建映射
+            val map = HashMap<Any, Any>(size)
+            
+            // 读取键值对
+            for (i in 0 until size) {
+                // 读取键类型和值
+                val keyType = readString(context)
+                val keyClass = Class.forName(keyType)
+                
+                val keyHandler = getTypeHandler(keyClass)
+                val key = keyHandler.read(context) as Any
+                
+                // 读取值类型和值
+                val valueType = readString(context)
+                val valueClass = Class.forName(valueType)
+                
+                val valueHandler = getTypeHandler(valueClass)
+                val value = valueHandler.read(context) as Any
+                
+                map[key] = value
+            }
+            
+            return map
+        }
+    }
+    
+    /**
      * 数组类型处理器
      */
-    class ArrayTypeHandler<T?>(private val componentType: Class<*>) : TypeHandler<Array<T>> {
-        private val elementHandler = when {
+    inner class ArrayTypeHandler<T>(private val componentType: Class<*>) : TypeHandler<Array<T>> {
+        private val elementHandler: TypeHandler<*> = when {
             componentType == Int::class.javaObjectType || componentType == Int::class.javaPrimitiveType -> 
                 IntTypeHandler()
             componentType == Long::class.javaObjectType || componentType == Long::class.javaPrimitiveType -> 
@@ -368,7 +472,7 @@ class ZeroCopySerializer {
             componentType == String::class.java -> 
                 StringTypeHandler()
             else -> 
-                ObjectTypeHandler(componentType)
+                ObjectTypeHandler<Any>(componentType)
         }
         
         @Suppress("UNCHECKED_CAST")
@@ -391,7 +495,7 @@ class ZeroCopySerializer {
                     String::class.java -> 
                         (elementHandler as StringTypeHandler).write(context, element as String)
                     else -> 
-                        (elementHandler as ObjectTypeHandler<T?>).write(context, element)
+                        (elementHandler as ObjectTypeHandler<Any>).write(context, element as Any)
                 }
             }
         }
@@ -419,7 +523,7 @@ class ZeroCopySerializer {
                     String::class.java -> 
                         (elementHandler as StringTypeHandler).read(context) as T
                     else -> 
-                        (elementHandler as ObjectTypeHandler<T?>).read(context)
+                        (elementHandler as ObjectTypeHandler<Any>).read(context) as T
                 }
                 array[i] = element
             }
@@ -429,185 +533,9 @@ class ZeroCopySerializer {
     }
     
     /**
-     * 列表类型处理器
-     */
-    class ListTypeHandler : TypeHandler<List<Any>> {
-        override fun write(context: SerializationContext, value: List<Any>) {
-            // 写入列表大小
-            context.buffer.putInt(value.size)
-            context.currentPosition += 4
-            
-            // 写入元素类型和值
-            for (element in value) {
-                val elementType = element.javaClass.name
-                writeString(context, elementType)
-                
-                val handler = getHandler(element.javaClass)
-                @Suppress("UNCHECKED_CAST")
-                (handler as TypeHandler<Any?>).write(context, element)
-            }
-        }
-        
-        private fun writeString(context: SerializationContext, value: String) {
-            // 写入字符串长度
-            val bytes = value.toByteArray(Charsets.UTF_8)
-            context.buffer.putInt(bytes.size)
-            
-            // 写入字符串内容
-            context.buffer.put(bytes)
-            context.currentPosition += 4 + bytes.size
-        }
-        
-        private fun readString(context: DeserializationContext): String {
-            // 读取字符串长度
-            val length = context.buffer.getInt()
-            
-            // 读取字符串内容
-            val bytes = ByteArray(length)
-            context.buffer.get(bytes)
-            context.currentPosition += 4 + length
-            
-            return String(bytes, Charsets.UTF_8)
-        }
-        
-        @Suppress("UNCHECKED_CAST")
-        override fun read(context: DeserializationContext): List<Any> {
-            // 读取列表大小
-            val size = context.buffer.getInt()
-            context.currentPosition += 4
-            
-            // 创建列表
-            val list = ArrayList<Any>(size)
-            
-            // 读取元素
-            for (i in 0 until size) {
-                val elementType = readString(context)
-                val type = Class.forName(elementType)
-                
-                val handler = getHandler(type)
-                val element = handler.read(context) as Any
-                list.add(element)
-            }
-            
-            return list
-        }
-        
-        private fun getHandler(type: Class<*>): TypeHandler<*> {
-            return when {
-                type == String::class.java -> StringTypeHandler()
-                type == Int::class.javaObjectType || type == Int::class.javaPrimitiveType -> IntTypeHandler()
-                type == Long::class.javaObjectType || type == Long::class.javaPrimitiveType -> LongTypeHandler()
-                type == Double::class.javaObjectType || type == Double::class.javaPrimitiveType -> DoubleTypeHandler()
-                type == Boolean::class.javaObjectType || type == Boolean::class.javaPrimitiveType -> BooleanTypeHandler()
-                type.isArray -> ArrayTypeHandler<Any?>(type.componentType)
-                List::class.java.isAssignableFrom(type) -> ListTypeHandler()
-                Map::class.java.isAssignableFrom(type) -> MapTypeHandler()
-                else -> ObjectTypeHandler<Any?>(type)
-            }
-        }
-    }
-    
-    /**
-     * 映射类型处理器
-     */
-    class MapTypeHandler : TypeHandler<Map<Any, Any>> {
-        override fun write(context: SerializationContext, value: Map<Any, Any>) {
-            // 写入映射大小
-            context.buffer.putInt(value.size)
-            context.currentPosition += 4
-            
-            // 写入键值对
-            for ((key, value) in value) {
-                // 写入键类型和值
-                val keyType = key.javaClass.name
-                writeString(context, keyType)
-                
-                val keyHandler = getHandler(key.javaClass)
-                @Suppress("UNCHECKED_CAST")
-                (keyHandler as TypeHandler<Any?>).write(context, key)
-                
-                // 写入值类型和值
-                val valueType = value.javaClass.name
-                writeString(context, valueType)
-                
-                val valueHandler = getHandler(value.javaClass)
-                @Suppress("UNCHECKED_CAST")
-                (valueHandler as TypeHandler<Any?>).write(context, value)
-            }
-        }
-        
-        private fun writeString(context: SerializationContext, value: String) {
-            // 写入字符串长度
-            val bytes = value.toByteArray(Charsets.UTF_8)
-            context.buffer.putInt(bytes.size)
-            
-            // 写入字符串内容
-            context.buffer.put(bytes)
-            context.currentPosition += 4 + bytes.size
-        }
-        
-        private fun readString(context: DeserializationContext): String {
-            // 读取字符串长度
-            val length = context.buffer.getInt()
-            
-            // 读取字符串内容
-            val bytes = ByteArray(length)
-            context.buffer.get(bytes)
-            context.currentPosition += 4 + length
-            
-            return String(bytes, Charsets.UTF_8)
-        }
-        
-        @Suppress("UNCHECKED_CAST")
-        override fun read(context: DeserializationContext): Map<Any, Any> {
-            // 读取映射大小
-            val size = context.buffer.getInt()
-            context.currentPosition += 4
-            
-            // 创建映射
-            val map = HashMap<Any, Any>(size)
-            
-            // 读取键值对
-            for (i in 0 until size) {
-                // 读取键类型和值
-                val keyType = readString(context)
-                val keyClass = Class.forName(keyType)
-                
-                val keyHandler = getHandler(keyClass)
-                val key = keyHandler.read(context) as Any
-                
-                // 读取值类型和值
-                val valueType = readString(context)
-                val valueClass = Class.forName(valueType)
-                
-                val valueHandler = getHandler(valueClass)
-                val value = valueHandler.read(context) as Any
-                
-                map[key] = value
-            }
-            
-            return map
-        }
-        
-        private fun getHandler(type: Class<*>): TypeHandler<*> {
-            return when {
-                type == String::class.java -> StringTypeHandler()
-                type == Int::class.javaObjectType || type == Int::class.javaPrimitiveType -> IntTypeHandler()
-                type == Long::class.javaObjectType || type == Long::class.javaPrimitiveType -> LongTypeHandler()
-                type == Double::class.javaObjectType || type == Double::class.javaPrimitiveType -> DoubleTypeHandler()
-                type == Boolean::class.javaObjectType || type == Boolean::class.javaPrimitiveType -> BooleanTypeHandler()
-                type.isArray -> ArrayTypeHandler<Any?>(type.componentType)
-                List::class.java.isAssignableFrom(type) -> ListTypeHandler()
-                Map::class.java.isAssignableFrom(type) -> MapTypeHandler()
-                else -> ObjectTypeHandler<Any?>(type)
-            }
-        }
-    }
-    
-    /**
      * 对象类型处理器
      */
-    class ObjectTypeHandler<T?>(private val type: Class<*>) : DeltaTypeHandler<T?> {
+    inner class ObjectTypeHandler<T>(private val type: Class<*>) : DeltaTypeHandler<T> {
         // 缓存类型的字段
         private val fields = type.declaredFields.filter { !it.isSynthetic }.also {
             it.forEach { field -> field.isAccessible = true }
@@ -635,9 +563,9 @@ class ZeroCopySerializer {
                     context.currentPosition += 1
                     
                     // 写入字段值
-                    val fieldHandler = getHandler(fieldValue.javaClass)
+                    val fieldHandler = getTypeHandler(fieldValue.javaClass)
                     @Suppress("UNCHECKED_CAST")
-                    (fieldHandler as TypeHandler<Any?>).write(context, fieldValue as Any)
+                    (fieldHandler as TypeHandler<Any>).write(context, fieldValue as Any)
                 } else {
                     // 写入字段值标记（空）
                     context.buffer.put(0)
@@ -676,7 +604,7 @@ class ZeroCopySerializer {
                 if (!isNull) {
                     // 读取字段值
                     val fieldType = field.type
-                    val fieldHandler = getHandler(fieldType)
+                    val fieldHandler = getTypeHandler(fieldType)
                     val fieldValue = fieldHandler.read(context)
                     
                     // 设置字段值
@@ -724,9 +652,9 @@ class ZeroCopySerializer {
                         context.currentPosition += 1
                         
                         // 写入字段值
-                        val fieldHandler = getHandler(fieldValue.javaClass)
+                        val fieldHandler = getTypeHandler(fieldValue.javaClass)
                         @Suppress("UNCHECKED_CAST")
-                        (fieldHandler as TypeHandler<Any?>).write(context, fieldValue as Any)
+                        (fieldHandler as TypeHandler<Any>).write(context, fieldValue as Any)
                     } else {
                         // 写入字段值标记（空）
                         context.buffer.put(0)
@@ -790,7 +718,7 @@ class ZeroCopySerializer {
                 if (!isNull) {
                     // 读取字段值
                     val fieldType = field.type
-                    val fieldHandler = getHandler(fieldType)
+                    val fieldHandler = getTypeHandler(fieldType)
                     val fieldValue = fieldHandler.read(context)
                     
                     // 设置字段值
@@ -810,20 +738,6 @@ class ZeroCopySerializer {
             if (value1 == null && value2 == null) return false
             if (value1 == null || value2 == null) return true
             return value1 != value2
-        }
-        
-        private fun getHandler(type: Class<*>): TypeHandler<*> {
-            return when {
-                type == String::class.java -> StringTypeHandler()
-                type == Int::class.javaObjectType || type == Int::class.javaPrimitiveType -> IntTypeHandler()
-                type == Long::class.javaObjectType || type == Long::class.javaPrimitiveType -> LongTypeHandler()
-                type == Double::class.javaObjectType || type == Double::class.javaPrimitiveType -> DoubleTypeHandler()
-                type == Boolean::class.javaObjectType || type == Boolean::class.javaPrimitiveType -> BooleanTypeHandler()
-                type.isArray -> ArrayTypeHandler<Any?>(type.componentType)
-                List::class.java.isAssignableFrom(type) -> ListTypeHandler()
-                Map::class.java.isAssignableFrom(type) -> MapTypeHandler()
-                else -> ObjectTypeHandler<Any?>(type)
-            }
         }
     }
 }

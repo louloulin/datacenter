@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm")
     kotlin("plugin.serialization")
+    id("me.champeau.jmh") version "0.7.1"
 }
 
 repositories {
@@ -36,6 +37,13 @@ dependencies {
     // Metrics & Monitoring
     implementation("io.micrometer:micrometer-core:1.10.5")
     implementation("org.hdrhistogram:HdrHistogram:2.1.12")
+    testImplementation("org.hdrhistogram:HdrHistogram:2.1.12")
+    
+    // JMH Benchmarking
+    jmh("org.openjdk.jmh:jmh-core:1.36")
+    jmh("org.openjdk.jmh:jmh-generator-annprocess:1.36")
+    testImplementation("org.openjdk.jmh:jmh-core:1.36")
+    testImplementation("org.openjdk.jmh:jmh-generator-annprocess:1.36")
 }
 
 tasks.test {
@@ -44,4 +52,11 @@ tasks.test {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// Configure JMH plugin
+jmh {
+    warmupIterations.set(5)
+    iterations.set(5)
+    fork.set(1)
 } 
