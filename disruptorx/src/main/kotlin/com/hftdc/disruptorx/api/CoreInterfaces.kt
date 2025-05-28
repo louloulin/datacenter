@@ -1,6 +1,16 @@
 package com.hftdc.disruptorx.api
 
+import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration
+
+/**
+ * 基础事件接口
+ */
+interface Event {
+    val id: String
+    val timestamp: Long
+    val type: String
+}
 
 /**
  * 分布式事件总线接口
@@ -419,4 +429,4 @@ interface PartitionStrategy {
             }
         }
     }
-} 
+}

@@ -2,3 +2,5 @@
 
 
 在disruptorx子模块，按照 @disruptorx.md 的计划，实现相关功能，增加测试验证，验证通过后更新 @disruptorx.md 标记实现的功能，中文说明
+
+plan3.md 按计划，在 disruptorx 目录，基于现有的代码实现相关功能，实现后增加测试验证，验证通过后更新 plan3.md 标记实现的功能

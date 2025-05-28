@@ -15,5 +15,11 @@ enum class NodeRole {
      * 工作节点
      * 执行实际的数据处理任务
      */
-    WORKER
-} 
+    WORKER,
+    
+    /**
+     * 混合节点
+     * 既是协调器又是工作节点
+     */
+    MIXED
+}

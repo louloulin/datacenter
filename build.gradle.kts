@@ -88,6 +88,11 @@ tasks.withType<KotlinCompile> {
     }
 }
 
+tasks.withType<JavaCompile> {
+    targetCompatibility = "17"
+    sourceCompatibility = "17"
+}
+
 tasks.withType<Test> {
     useJUnitPlatform()
 }
@@ -106,4 +111,4 @@ tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
     archiveBaseName.set("hftdc")
     archiveClassifier.set("")
     archiveVersion.set("")
-} 
+}

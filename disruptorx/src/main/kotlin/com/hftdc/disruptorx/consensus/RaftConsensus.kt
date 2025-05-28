@@ -1,0 +1,481 @@
+package com.hftdc.disruptorx.consensus
+
+import com.hftdc.disruptorx.api.NodeInfo
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.random.Random
+
+/**
+ * Raft 共识算法实现
+ * 提供分布式环境下的强一致性保证
+ */
+class RaftConsensus(
+    private val nodeId: String,
+    private val clusterNodes: List<NodeInfo>
+) {
+    // Raft 状态
+    private val currentTerm = AtomicLong(0)
+    private val votedFor = AtomicReference<String?>(null)
+    private val log = mutableListOf<LogEntry>()
+    private val commitIndex = AtomicLong(0)
+    private val lastApplied = AtomicLong(0)
+    
+    // Leader 状态
+    private val nextIndex = ConcurrentHashMap<String, Long>()
+    private val matchIndex = ConcurrentHashMap<String, Long>()
+    
+    // 节点状态
+    @Volatile
+    private var state = RaftState.FOLLOWER
+    @Volatile
+    private var leaderId: String? = null
+    
+    // 定时器
+    private var electionTimeout: Job? = null
+    private var heartbeatJob: Job? = null
+    
+    // 通信通道
+    private val messageChannel = Channel<RaftMessage>(Channel.UNLIMITED)
+    
+    // 锁
+    private val stateMutex = Mutex()
+    
+    /**
+     * 启动 Raft 节点
+     */
+    suspend fun start() {
+        resetElectionTimeout()
+        
+        // 启动消息处理协程
+        CoroutineScope(Dispatchers.Default).launch {
+            processMessages()
+        }
+    }
+    
+    /**
+     * 提议新的日志条目
+     */
+    suspend fun propose(data: ByteArray): Long {
+        if (state != RaftState.LEADER) {
+            throw IllegalStateException("Only leader can propose entries")
+        }
+        
+        stateMutex.withLock {
+            val entry = LogEntry(
+                term = currentTerm.get(),
+                index = log.size.toLong(),
+                data = data,
+                timestamp = System.currentTimeMillis()
+            )
+            
+            log.add(entry)
+            
+            // 复制到大多数节点
+            val replicationResult = replicateToMajority(entry)
+            
+            if (replicationResult) {
+                commitIndex.set(entry.index)
+                return entry.index
+            } else {
+                // 回滚
+                log.removeAt(log.size - 1)
+                throw IllegalStateException("Failed to replicate to majority")
+            }
+        }
+    }
+    
+    /**
+     * 处理投票请求
+     */
+    suspend fun handleVoteRequest(request: VoteRequest): VoteResponse {
+        stateMutex.withLock {
+            val currentTermValue = currentTerm.get()
+            
+            // 如果请求的任期更大，更新当前任期
+            if (request.term > currentTermValue) {
+                currentTerm.set(request.term)
+                votedFor.set(null)
+                becomeFollower()
+            }
+            
+            val grantVote = when {
+                request.term < currentTermValue -> false
+                votedFor.get() != null && votedFor.get() != request.candidateId -> false
+                !isLogUpToDate(request.lastLogIndex, request.lastLogTerm) -> false
+                else -> {
+                    votedFor.set(request.candidateId)
+                    resetElectionTimeout()
+                    true
+                }
+            }
+            
+            return VoteResponse(
+                term = currentTerm.get(),
+                voteGranted = grantVote
+            )
+        }
+    }
+    
+    /**
+     * 处理追加条目请求
+     */
+    suspend fun handleAppendEntries(request: AppendEntriesRequest): AppendEntriesResponse {
+        stateMutex.withLock {
+            val currentTermValue = currentTerm.get()
+            
+            // 如果请求的任期更大，更新当前任期
+            if (request.term > currentTermValue) {
+                currentTerm.set(request.term)
+                votedFor.set(null)
+                becomeFollower()
+            }
+            
+            // 拒绝过期的请求
+            if (request.term < currentTermValue) {
+                return AppendEntriesResponse(
+                    term = currentTermValue,
+                    success = false
+                )
+            }
+            
+            // 重置选举超时
+            resetElectionTimeout()
+            leaderId = request.leaderId
+            
+            // 检查日志一致性
+            if (request.prevLogIndex > 0) {
+                if (log.size <= request.prevLogIndex.toInt() ||
+                    log[request.prevLogIndex.toInt()].term != request.prevLogTerm) {
+                    return AppendEntriesResponse(
+                        term = currentTermValue,
+                        success = false
+                    )
+                }
+            }
+            
+            // 追加新条目
+            if (request.entries.isNotEmpty()) {
+                // 删除冲突的条目
+                val startIndex = request.prevLogIndex + 1
+                if (log.size > startIndex.toInt()) {
+                    log.subList(startIndex.toInt(), log.size).clear()
+                }
+                
+                // 添加新条目
+                log.addAll(request.entries)
+            }
+            
+            // 更新提交索引
+            if (request.leaderCommit > commitIndex.get()) {
+                commitIndex.set(minOf(request.leaderCommit, log.size.toLong() - 1))
+            }
+            
+            return AppendEntriesResponse(
+                term = currentTermValue,
+                success = true
+            )
+        }
+    }
+    
+    /**
+     * 开始选举
+     */
+    private suspend fun startElection() {
+        stateMutex.withLock {
+            state = RaftState.CANDIDATE
+            currentTerm.incrementAndGet()
+            votedFor.set(nodeId)
+            resetElectionTimeout()
+            
+            val votes = AtomicLong(1) // 自己的票
+            val majority = (clusterNodes.size + 1) / 2 + 1
+            
+            // 向所有其他节点发送投票请求
+            clusterNodes.filter { it.nodeId != nodeId }.forEach { node ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val request = VoteRequest(
+                            term = currentTerm.get(),
+                            candidateId = nodeId,
+                            lastLogIndex = log.size.toLong() - 1,
+                            lastLogTerm = if (log.isNotEmpty()) log.last().term else 0
+                        )
+                        
+                        val response = sendVoteRequest(node, request)
+                        
+                        if (response.voteGranted) {
+                            val currentVotes = votes.incrementAndGet()
+                            if (currentVotes >= majority && state == RaftState.CANDIDATE) {
+                                becomeLeader()
+                            }
+                        } else if (response.term > currentTerm.get()) {
+                            currentTerm.set(response.term)
+                            votedFor.set(null)
+                            becomeFollower()
+                        }
+                    } catch (e: Exception) {
+                        // 网络错误，忽略这个节点的投票
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * 成为 Leader
+     */
+    private suspend fun becomeLeader() {
+        state = RaftState.LEADER
+        leaderId = nodeId
+        
+        // 初始化 Leader 状态
+        clusterNodes.forEach { node ->
+            nextIndex[node.nodeId] = log.size.toLong()
+            matchIndex[node.nodeId] = 0
+        }
+        
+        // 开始发送心跳
+        startHeartbeat()
+    }
+    
+    /**
+     * 成为 Follower
+     */
+    private suspend fun becomeFollower() {
+        state = RaftState.FOLLOWER
+        heartbeatJob?.cancel()
+        resetElectionTimeout()
+    }
+    
+    /**
+     * 开始心跳
+     */
+    private fun startHeartbeat() {
+        heartbeatJob = CoroutineScope(Dispatchers.Default).launch {
+            while (state == RaftState.LEADER) {
+                sendHeartbeat()
+                delay(HEARTBEAT_INTERVAL)
+            }
+        }
+    }
+    
+    /**
+     * 发送心跳
+     */
+    private suspend fun sendHeartbeat() {
+        clusterNodes.filter { it.nodeId != nodeId }.forEach { node ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val request = AppendEntriesRequest(
+                        term = currentTerm.get(),
+                        leaderId = nodeId,
+                        prevLogIndex = 0,
+                        prevLogTerm = 0,
+                        entries = emptyList(),
+                        leaderCommit = commitIndex.get()
+                    )
+                    
+                    sendAppendEntries(node, request)
+                } catch (e: Exception) {
+                    // 网络错误，忽略
+                }
+            }
+        }
+    }
+    
+    /**
+     * 复制到大多数节点
+     */
+    private suspend fun replicateToMajority(entry: LogEntry): Boolean {
+        val majority = (clusterNodes.size + 1) / 2 + 1
+        val successCount = AtomicLong(1) // 包括自己
+        
+        val jobs = clusterNodes.filter { it.nodeId != nodeId }.map { node ->
+            CoroutineScope(Dispatchers.IO).async {
+                try {
+                    val request = AppendEntriesRequest(
+                        term = currentTerm.get(),
+                        leaderId = nodeId,
+                        prevLogIndex = entry.index - 1,
+                        prevLogTerm = if (entry.index > 0) log[(entry.index - 1).toInt()].term else 0,
+                        entries = listOf(entry),
+                        leaderCommit = commitIndex.get()
+                    )
+                    
+                    val response = sendAppendEntries(node, request)
+                    if (response.success) {
+                        successCount.incrementAndGet()
+                    }
+                } catch (e: Exception) {
+                    // 网络错误
+                }
+            }
+        }
+        
+        // 等待所有请求完成
+        jobs.awaitAll()
+        
+        return successCount.get() >= majority
+    }
+    
+    /**
+     * 重置选举超时
+     */
+    private fun resetElectionTimeout() {
+        electionTimeout?.cancel()
+        electionTimeout = CoroutineScope(Dispatchers.Default).launch {
+            delay(Random.nextLong(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX))
+            if (state != RaftState.LEADER) {
+                startElection()
+            }
+        }
+    }
+    
+    /**
+     * 检查日志是否最新
+     */
+    private fun isLogUpToDate(lastLogIndex: Long, lastLogTerm: Long): Boolean {
+        if (log.isEmpty()) return true
+        
+        val ourLastEntry = log.last()
+        return when {
+            lastLogTerm > ourLastEntry.term -> true
+            lastLogTerm < ourLastEntry.term -> false
+            else -> lastLogIndex >= log.size - 1
+        }
+    }
+    
+    /**
+     * 处理消息
+     */
+    private suspend fun processMessages() {
+        for (message in messageChannel) {
+            when (message) {
+                is VoteRequestMessage -> {
+                    val response = handleVoteRequest(message.request)
+                    // 发送响应
+                }
+                is AppendEntriesMessage -> {
+                    val response = handleAppendEntries(message.request)
+                    // 发送响应
+                }
+            }
+        }
+    }
+    
+    // 网络通信方法（需要具体实现）
+    private suspend fun sendVoteRequest(node: NodeInfo, request: VoteRequest): VoteResponse {
+        // TODO: 实现网络通信
+        throw NotImplementedError("Network communication not implemented")
+    }
+    
+    private suspend fun sendAppendEntries(node: NodeInfo, request: AppendEntriesRequest): AppendEntriesResponse {
+        // TODO: 实现网络通信
+        throw NotImplementedError("Network communication not implemented")
+    }
+    
+    companion object {
+        private const val HEARTBEAT_INTERVAL = 50L // 50ms
+        private const val ELECTION_TIMEOUT_MIN = 150L // 150ms
+        private const val ELECTION_TIMEOUT_MAX = 300L // 300ms
+    }
+}
+
+/**
+ * Raft 状态枚举
+ */
+enum class RaftState {
+    FOLLOWER,
+    CANDIDATE,
+    LEADER
+}
+
+/**
+ * 日志条目
+ */
+data class LogEntry(
+    val term: Long,
+    val index: Long,
+    val data: ByteArray,
+    val timestamp: Long
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        
+        other as LogEntry
+        
+        if (term != other.term) return false
+        if (index != other.index) return false
+        if (!data.contentEquals(other.data)) return false
+        if (timestamp != other.timestamp) return false
+        
+        return true
+    }
+    
+    override fun hashCode(): Int {
+        var result = term.hashCode()
+        result = 31 * result + index.hashCode()
+        result = 31 * result + data.contentHashCode()
+        result = 31 * result + timestamp.hashCode()
+        return result
+    }
+}
+
+/**
+ * 投票请求
+ */
+data class VoteRequest(
+    val term: Long,
+    val candidateId: String,
+    val lastLogIndex: Long,
+    val lastLogTerm: Long
+)
+
+/**
+ * 投票响应
+ */
+data class VoteResponse(
+    val term: Long,
+    val voteGranted: Boolean
+)
+
+/**
+ * 追加条目请求
+ */
+data class AppendEntriesRequest(
+    val term: Long,
+    val leaderId: String,
+    val prevLogIndex: Long,
+    val prevLogTerm: Long,
+    val entries: List<LogEntry>,
+    val leaderCommit: Long
+)
+
+/**
+ * 追加条目响应
+ */
+data class AppendEntriesResponse(
+    val term: Long,
+    val success: Boolean
+)
+
+/**
+ * Raft 消息基类
+ */
+sealed class RaftMessage
+
+data class VoteRequestMessage(
+    val request: VoteRequest,
+    val senderId: String
+) : RaftMessage()
+
+data class AppendEntriesMessage(
+    val request: AppendEntriesRequest,
+    val senderId: String
+) : RaftMessage()
