@@ -2,6 +2,7 @@ package com.hftdc.disruptorx.distributed
 
 import com.hftdc.disruptorx.consensus.RaftConsensus
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
@@ -21,6 +22,7 @@ class DistributedLockService(
     private val lockWaiters = ConcurrentHashMap<String, MutableList<LockWaiter>>()
     private val lockSequence = AtomicLong(0)
     private val mutex = Mutex()
+    private val lockNotifications = ConcurrentHashMap<String, Channel<Boolean>>()
     
     /**
      * 尝试获取分布式锁
@@ -31,6 +33,7 @@ class DistributedLockService(
         leaseTime: Duration = 60.seconds
     ): DistributedLock? {
         val lockId = generateLockId()
+        println("生成锁ID: $lockId")
         val request = LockRequest(
             lockId = lockId,
             lockName = lockName,
@@ -41,12 +44,26 @@ class DistributedLockService(
         )
         
         return try {
+            // 先创建通知Channel
+            val channel = Channel<Boolean>(1)
+            lockNotifications[lockId] = channel
+            println("创建通知Channel: $lockId")
+            
             // 通过 Raft 共识提议锁请求
+            println("提议锁请求: $request")
             val logIndex = raftConsensus.propose(serializeLockRequest(request))
+            println("提议成功，日志索引: $logIndex")
             
             // 等待锁获取结果
-            waitForLockResult(lockId, timeout)
+            println("等待锁获取结果...")
+            val result = waitForLockResult(lockId, timeout)
+            println("锁获取结果: $result")
+            result
         } catch (e: Exception) {
+            println("锁获取异常: ${e.message}")
+            e.printStackTrace()
+            // 清理Channel
+            lockNotifications.remove(lockId)
             null
         }
     }
@@ -76,13 +93,24 @@ class DistributedLockService(
      */
     suspend fun applyLogEntry(data: ByteArray) {
         try {
+            println("应用日志条目...")
             when (val operation = deserializeLockOperation(data)) {
-                is LockRequest -> handleLockRequest(operation)
-                is UnlockRequest -> handleUnlockRequest(operation)
-                is LockExpiration -> handleLockExpiration(operation)
+                is LockRequest -> {
+                    println("处理锁请求: $operation")
+                    handleLockRequest(operation)
+                }
+                is UnlockRequest -> {
+                    println("处理解锁请求: $operation")
+                    handleUnlockRequest(operation)
+                }
+                is LockExpiration -> {
+                    println("处理锁过期: $operation")
+                    handleLockExpiration(operation)
+                }
             }
         } catch (e: Exception) {
-            // 日志条目格式错误，忽略
+            println("日志条目格式错误: ${e.message}")
+            e.printStackTrace()
         }
     }
     
@@ -92,6 +120,7 @@ class DistributedLockService(
     private suspend fun handleLockRequest(request: LockRequest) {
         mutex.withLock {
             val existingLock = locks[request.lockName]
+            println("处理锁请求 - 现有锁: $existingLock")
             
             if (existingLock == null || isLockExpired(existingLock)) {
                 // 锁不存在或已过期，授予锁
@@ -105,8 +134,10 @@ class DistributedLockService(
                 )
                 
                 locks[request.lockName] = lockInfo
+                println("授予锁: $lockInfo")
                 
                 // 通知等待者
+                println("通知等待者: ${request.lockId}")
                 notifyLockWaiter(request.lockId, true)
                 
                 // 设置锁过期定时器
@@ -145,21 +176,32 @@ class DistributedLockService(
                 // 处理等待队列
                 val waiters = lockWaiters[request.lockName]
                 if (!waiters.isNullOrEmpty()) {
-                    val nextWaiter = waiters.removeAt(0)
+                    // 查找下一个仍在等待的waiter（channel还存在）
+                    var nextWaiter: LockWaiter? = null
+                    while (waiters.isNotEmpty()) {
+                        val candidate = waiters.removeAt(0)
+                        if (lockNotifications.containsKey(candidate.lockId)) {
+                            nextWaiter = candidate
+                            break
+                        }
+                        // 如果channel不存在，说明已经超时，跳过这个waiter
+                    }
                     
-                    // 为下一个等待者授予锁
-                    val lockInfo = LockInfo(
-                        lockId = nextWaiter.lockId,
-                        lockName = request.lockName,
-                        nodeId = nextWaiter.nodeId,
-                        acquiredTime = System.currentTimeMillis(),
-                        leaseTime = 60000, // 默认60秒
-                        expirationTime = System.currentTimeMillis() + 60000
-                    )
-                    
-                    locks[request.lockName] = lockInfo
-                    notifyLockWaiter(nextWaiter.lockId, true)
-                    scheduleLockExpiration(lockInfo)
+                    if (nextWaiter != null) {
+                        // 为下一个等待者授予锁
+                        val lockInfo = LockInfo(
+                            lockId = nextWaiter.lockId,
+                            lockName = request.lockName,
+                            nodeId = nextWaiter.nodeId,
+                            acquiredTime = System.currentTimeMillis(),
+                            leaseTime = 60000, // 默认60秒
+                            expirationTime = System.currentTimeMillis() + 60000
+                        )
+                        
+                        locks[request.lockName] = lockInfo
+                        notifyLockWaiter(nextWaiter.lockId, true)
+                        scheduleLockExpiration(lockInfo)
+                    }
                     
                     if (waiters.isEmpty()) {
                         lockWaiters.remove(request.lockName)
@@ -183,21 +225,32 @@ class DistributedLockService(
                 // 处理等待队列
                 val waiters = lockWaiters[expiration.lockName]
                 if (!waiters.isNullOrEmpty()) {
-                    val nextWaiter = waiters.removeAt(0)
+                    // 查找下一个仍在等待的waiter（channel还存在）
+                    var nextWaiter: LockWaiter? = null
+                    while (waiters.isNotEmpty()) {
+                        val candidate = waiters.removeAt(0)
+                        if (lockNotifications.containsKey(candidate.lockId)) {
+                            nextWaiter = candidate
+                            break
+                        }
+                        // 如果channel不存在，说明已经超时，跳过这个waiter
+                    }
                     
-                    // 为下一个等待者授予锁
-                    val lockInfo = LockInfo(
-                        lockId = nextWaiter.lockId,
-                        lockName = expiration.lockName,
-                        nodeId = nextWaiter.nodeId,
-                        acquiredTime = System.currentTimeMillis(),
-                        leaseTime = 60000,
-                        expirationTime = System.currentTimeMillis() + 60000
-                    )
-                    
-                    locks[expiration.lockName] = lockInfo
-                    notifyLockWaiter(nextWaiter.lockId, true)
-                    scheduleLockExpiration(lockInfo)
+                    if (nextWaiter != null) {
+                        // 为下一个等待者授予锁
+                        val lockInfo = LockInfo(
+                            lockId = nextWaiter.lockId,
+                            lockName = expiration.lockName,
+                            nodeId = nextWaiter.nodeId,
+                            acquiredTime = System.currentTimeMillis(),
+                            leaseTime = 60000,
+                            expirationTime = System.currentTimeMillis() + 60000
+                        )
+                        
+                        locks[expiration.lockName] = lockInfo
+                        notifyLockWaiter(nextWaiter.lockId, true)
+                        scheduleLockExpiration(lockInfo)
+                    }
                     
                     if (waiters.isEmpty()) {
                         lockWaiters.remove(expiration.lockName)
@@ -211,24 +264,38 @@ class DistributedLockService(
      * 等待锁获取结果
      */
     private suspend fun waitForLockResult(lockId: String, timeout: Duration): DistributedLock? {
-        return withTimeoutOrNull(timeout) {
-            // 这里应该等待来自 Raft 状态机的通知
-            // 简化实现，直接检查锁状态
-            while (true) {
-                val lock = findLockByLockId(lockId)
-                if (lock != null) {
-                    return@withTimeoutOrNull DistributedLock(
-                        lockId = lock.lockId,
-                        lockName = lock.lockName,
-                        nodeId = lock.nodeId,
-                        acquiredTime = lock.acquiredTime,
-                        expirationTime = lock.expirationTime
-                    )
+        val channel = lockNotifications[lockId]
+        if (channel == null) {
+            println("waitForLockResult - 没有找到Channel: $lockId")
+            return null
+        }
+        
+        return try {
+            withTimeoutOrNull(timeout) {
+                println("waitForLockResult - 开始等待通知: $lockId")
+                val success = channel.receive()
+                println("waitForLockResult - 收到通知: $lockId, success: $success")
+                if (success) {
+                    val lock = findLockByLockId(lockId)
+                    if (lock != null) {
+                        DistributedLock(
+                            lockId = lock.lockId,
+                            lockName = lock.lockName,
+                            nodeId = lock.nodeId,
+                            acquiredTime = lock.acquiredTime,
+                            expirationTime = lock.expirationTime
+                        )
+                    } else {
+                        null
+                    }
+                } else {
+                    null
                 }
-                delay(10) // 10ms 轮询间隔
             }
-            @Suppress("UNREACHABLE_CODE")
-            null // 这行代码永远不会执行，但编译器需要它
+        } finally {
+            // 清理Channel
+            lockNotifications.remove(lockId)
+            channel.close()
         }
     }
     
@@ -250,8 +317,21 @@ class DistributedLockService(
      * 通知锁等待者
      */
     private fun notifyLockWaiter(lockId: String, success: Boolean) {
-        // 这里应该通知等待的协程
-        // 简化实现，可以使用 Channel 或其他机制
+        println("notifyLockWaiter - lockId: $lockId, success: $success")
+        val channel = lockNotifications[lockId]
+        println("notifyLockWaiter - channel: $channel")
+        if (channel != null) {
+            CoroutineScope(Dispatchers.Default).launch {
+                try {
+                    channel.send(success)
+                    println("notifyLockWaiter - 已发送通知")
+                } catch (e: Exception) {
+                    // Channel可能已关闭
+                }
+            }
+        } else {
+            println("notifyLockWaiter - 没有找到等待的Channel")
+        }
     }
     
     /**
@@ -288,6 +368,9 @@ class DistributedLockService(
                 if (waiters?.isEmpty() == true) {
                     lockWaiters.remove(lockName)
                 }
+                
+                // 清理通知Channel
+                lockNotifications.remove(waiter.lockId)
             }
             
             notifyLockWaiter(waiter.lockId, false)

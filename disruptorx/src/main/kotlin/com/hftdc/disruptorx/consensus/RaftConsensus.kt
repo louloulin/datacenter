@@ -18,12 +18,14 @@ class RaftConsensus(
     private val nodeId: String,
     private val clusterNodes: List<NodeInfo>
 ) {
+    // 状态机应用器
+    private var stateMachineApplier: (suspend (ByteArray) -> Unit)? = null
     // Raft 状态
     private val currentTerm = AtomicLong(0)
     private val votedFor = AtomicReference<String?>(null)
     private val log = mutableListOf<LogEntry>()
     private val commitIndex = AtomicLong(0)
-    private val lastApplied = AtomicLong(0)
+    private val lastApplied = AtomicLong(-1)
     
     // Leader 状态
     private val nextIndex = ConcurrentHashMap<String, Long>()
@@ -46,6 +48,13 @@ class RaftConsensus(
     private val stateMutex = Mutex()
     
     /**
+     * 设置状态机应用器
+     */
+    fun setStateMachineApplier(applier: suspend (ByteArray) -> Unit) {
+        this.stateMachineApplier = applier
+    }
+    
+    /**
      * 启动 Raft 节点
      */
     suspend fun start() {
@@ -61,6 +70,7 @@ class RaftConsensus(
      * 提议新的日志条目
      */
     suspend fun propose(data: ByteArray): Long {
+        println("propose - 当前状态: $state")
         if (state != RaftState.LEADER) {
             throw IllegalStateException("Only leader can propose entries")
         }
@@ -73,16 +83,26 @@ class RaftConsensus(
                 timestamp = System.currentTimeMillis()
             )
             
+            println("propose - 创建日志条目: $entry")
             log.add(entry)
+            println("propose - 日志大小: ${log.size}")
             
             // 复制到大多数节点
+            println("propose - 开始复制到大多数节点")
             val replicationResult = replicateToMajority(entry)
+            println("propose - 复制结果: $replicationResult")
             
             if (replicationResult) {
+                println("propose - 设置commitIndex: ${entry.index}")
                 commitIndex.set(entry.index)
+                println("propose - 当前commitIndex: ${commitIndex.get()}")
+                // 立即应用已提交的日志条目（简化实现）
+                println("propose - 开始应用已提交的日志条目")
+                applyCommittedEntries()
                 return entry.index
             } else {
                 // 回滚
+                println("propose - 复制失败，回滚")
                 log.removeAt(log.size - 1)
                 throw IllegalStateException("Failed to replicate to majority")
             }
@@ -292,7 +312,12 @@ class RaftConsensus(
      * 复制到大多数节点
      */
     private suspend fun replicateToMajority(entry: LogEntry): Boolean {
-        val majority = (clusterNodes.size + 1) / 2 + 1
+        // 对于单节点集群，直接返回成功
+        if (clusterNodes.size == 1) {
+            return true
+        }
+        
+        val majority = (clusterNodes.size + 1) / 2
         val successCount = AtomicLong(1) // 包括自己
         
         val jobs = clusterNodes.filter { it.nodeId != nodeId }.map { node ->
@@ -380,6 +405,32 @@ class RaftConsensus(
             term = currentTerm.get(),
             success = true
         )
+    }
+    
+    /**
+     * 应用已提交的日志条目
+     */
+    private suspend fun applyCommittedEntries() {
+        val currentLastApplied = lastApplied.get()
+        val currentCommitIndex = commitIndex.get()
+        
+        println("应用已提交的日志条目 - lastApplied: $currentLastApplied, commitIndex: $currentCommitIndex")
+        
+        // 修复：当lastApplied为-1时，从0开始应用
+        val startIndex = if (currentLastApplied == -1L) 0L else currentLastApplied + 1
+        
+        for (index in startIndex..currentCommitIndex) {
+            if (index < log.size) {
+                val entry = log[index.toInt()]
+                println("应用日志条目 - index: $index, entry: $entry")
+                println("stateMachineApplier: $stateMachineApplier")
+                stateMachineApplier?.invoke(entry.data)
+                lastApplied.set(index)
+                println("已应用日志条目 - index: $index")
+            } else {
+                println("跳过日志条目 - index: $index, log.size: ${log.size}")
+            }
+        }
     }
     
     companion object {

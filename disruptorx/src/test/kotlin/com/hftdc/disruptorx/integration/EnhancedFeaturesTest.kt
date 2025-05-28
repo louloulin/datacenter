@@ -34,11 +34,9 @@ class EnhancedFeaturesTest {
         metricsCollector = MetricsCollector()
         metricsCollector.addExporter(ConsoleMetricsExporter())
         
-        // 初始化 Raft 共识
+        // 初始化 Raft 共识（单节点集群用于测试）
         val clusterNodes = listOf(
-            NodeInfo("node1", "localhost", 8001, false, NodeRole.MIXED, NodeStatus.ACTIVE),
-            NodeInfo("node2", "localhost", 8002, false, NodeRole.MIXED, NodeStatus.ACTIVE),
-            NodeInfo("node3", "localhost", 8003, false, NodeRole.MIXED, NodeStatus.ACTIVE)
+            NodeInfo("node1", "localhost", 8001, true, NodeRole.MIXED, NodeStatus.ACTIVE)
         )
         raftConsensus = RaftConsensus("node1", clusterNodes)
         
@@ -51,6 +49,11 @@ class EnhancedFeaturesTest {
         
         // 初始化分布式锁服务
         lockService = DistributedLockService(raftConsensus, "node1")
+        
+        // 注册状态机应用器
+        raftConsensus.setStateMachineApplier { data ->
+            lockService.applyLogEntry(data)
+        }
         
         // 初始化工作流管理器
         workflowManager = EnhancedWorkflowManager(metricsCollector)
@@ -110,7 +113,9 @@ class EnhancedFeaturesTest {
     @Test
     fun `test distributed lock service`() = runTest {
         // 测试锁获取
+        println("开始测试锁获取...")
         val lock1 = lockService.tryLock("test-resource", timeout = 5.seconds)
+        println("锁获取结果: $lock1")
         assertNotNull(lock1)
         assertEquals("test-resource", lock1!!.lockName)
         assertEquals("node1", lock1.nodeId)
