@@ -190,13 +190,14 @@ class DistributedDisruptorMetrics(
     /**
      * 获取本地节点指标
      */
-    fun getLocalMetrics(): NodeMetrics {
+    suspend fun getLocalMetrics(): NodeMetrics {
+        val latencyStats = localMetrics.getHistogramStats("disruptor.latency")
         return NodeMetrics(
             nodeId = nodeId,
-            throughput = localMetrics.getGaugeValue("disruptor.throughput") ?: 0.0,
-            averageLatency = localMetrics.getHistogramMean("disruptor.latency") ?: 0.0,
-            p99Latency = localMetrics.getHistogramPercentile("disruptor.latency", 99.0) ?: 0.0,
-            queueDepth = localMetrics.getGaugeValue("disruptor.queue_depth")?.toInt() ?: 0,
+            throughput = localMetrics.getGauge("disruptor.throughput"),
+            averageLatency = latencyStats?.mean ?: 0.0,
+            p99Latency = latencyStats?.p99 ?: 0.0,
+            queueDepth = localMetrics.getGauge("disruptor.queue_depth").toInt(),
             cpuUsage = getCurrentCpuUsage(),
             memoryUsage = getCurrentMemoryUsage(),
             lastUpdateTime = System.currentTimeMillis()

@@ -170,15 +170,15 @@ class RaftHttpServer(
         val leaderCommitMatch = """"leaderCommit":(\d+)""".toRegex().find(json)
         
         // 解析日志条目数组
-        val entriesPattern = """"entries":\[([^\]]*)]""".
-        val entriesMatch = entriesPattern.toRegex().find(json)
+        val entriesPattern = """"entries":\[([^\]]*)]""".toRegex()
+        val entriesMatch = entriesPattern.find(json)
         val entries = mutableListOf<LogEntry>()
         
         entriesMatch?.groupValues?.get(1)?.let { entriesJson ->
             if (entriesJson.isNotBlank()) {
                 // 简单解析每个日志条目
                 val entryPattern = """\{[^}]+\}""".toRegex()
-                entryPattern.findAll(entriesJson).forEach { entryMatch ->
+                entryPattern.findAll(entriesJson).forEach { entryMatch: MatchResult ->
                     val entryJson = entryMatch.value
                     val entryTermMatch = """"term":(\d+)""".toRegex().find(entryJson)
                     val entryIndexMatch = """"index":(\d+)""".toRegex().find(entryJson)

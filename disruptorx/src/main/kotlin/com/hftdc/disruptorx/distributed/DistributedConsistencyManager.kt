@@ -48,7 +48,7 @@ class DistributedConsistencyManager(
      * 停止一致性管理器
      */
     suspend fun stop() {
-        raftNode.stop()
+        raftNode.stopWithHttpServer()
         job.cancel()
     }
     

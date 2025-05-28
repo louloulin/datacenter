@@ -70,24 +70,43 @@ class DistributedEventBusImpl(
      * @param topic 目标主题
      */
     override suspend fun publish(event: Any, topic: String) {
-        // 确定目标节点
-        val targetNodeId = determineTargetNode(topic)
+        println("Publishing event: $event to topic: $topic")
+        println("Local handlers: ${localHandlers.keys}")
         
-        if (targetNodeId == localNodeId) {
-            // 本地发布
+        // 检查是否有本地订阅者
+        val hasLocalSubscribers = localHandlers.containsKey(topic) && 
+                                 localHandlers[topic]?.isNotEmpty() == true
+        
+        println("Has local subscribers: $hasLocalSubscribers")
+        
+        if (hasLocalSubscribers) {
+            // 直接本地处理
+            println("Processing locally")
             processReceivedEvent(event, topic)
         } else {
-            // 远程发布
-            val clusterMembers = nodeManager.getClusterMembers()
-            val node = clusterMembers.find { it.nodeId == targetNodeId }
-            if (node == null) {
-                // 节点不可用，回退到本地处理
-                processReceivedEvent(event, topic)
-                return
-            }
+            // 确定目标节点
+            val targetNodeId = determineTargetNode(topic)
+            println("Target node ID: $targetNodeId, local node ID: $localNodeId")
             
-            // 发送到远程节点
-            networkClient.sendEvent(event, topic, node)
+            if (targetNodeId == localNodeId) {
+                // 本地发布
+                println("Processing as local node")
+                processReceivedEvent(event, topic)
+            } else {
+                // 远程发布
+                val clusterMembers = nodeManager.getClusterMembers()
+                val node = clusterMembers.find { it.nodeId == targetNodeId }
+                if (node == null) {
+                    // 节点不可用，回退到本地处理
+                    println("Node not found, falling back to local processing")
+                    processReceivedEvent(event, topic)
+                    return
+                }
+                
+                // 发送到远程节点
+                println("Sending to remote node: ${node.nodeId}")
+                networkClient.sendEvent(event, topic, node)
+            }
         }
     }
 
@@ -97,10 +116,12 @@ class DistributedEventBusImpl(
      * @param handler 事件处理函数
      */
     override fun subscribe(topic: String, handler: suspend (Any) -> Unit) {
+        println("Subscribing to topic: $topic")
         val handlers = localHandlers.computeIfAbsent(topic) { mutableListOf() }
         synchronized(handlers) {
             handlers.add(handler)
         }
+        println("Handlers for topic $topic: ${handlers.size}")
         
         // 通知集群有节点对该主题感兴趣
         launch {
@@ -134,16 +155,24 @@ class DistributedEventBusImpl(
      * @param topic 主题
      */
     private fun processReceivedEvent(event: Any, topic: String) {
-        val handlers = localHandlers[topic] ?: return
+        val handlers = localHandlers[topic]
+        println("Processing event for topic: $topic, handlers count: ${handlers?.size ?: 0}")
+        
+        if (handlers == null || handlers.isEmpty()) {
+            println("No handlers found for topic: $topic")
+            return
+        }
         
         // 为每个处理器异步调用
         handlers.forEach { handler ->
             launch {
                 try {
+                    println("Calling handler for event: $event")
                     handler(event)
                 } catch (e: Exception) {
                     // 记录错误但不影响其他处理器
                     println("Error processing event: ${e.message}")
+                    e.printStackTrace()
                 }
             }
         }
@@ -258,8 +287,15 @@ class NettyEventTransport(
      * @param targetNode 目标节点
      */
     suspend fun sendEvent(event: Any, topic: String, targetNode: NodeInfo) {
-        // 简化实现：直接在本地处理事件（模拟网络传输）
-        eventReceiver?.invoke(event, topic)
+        // 检查是否为本地节点
+        if (targetNode.nodeId == localNodeId) {
+            // 本地处理
+            eventReceiver?.invoke(event, topic)
+        } else {
+            // 实际网络传输实现
+            // 目前简化为本地处理（在真实环境中应该通过网络发送）
+            eventReceiver?.invoke(event, topic)
+        }
     }
     
     /**
@@ -271,6 +307,7 @@ class NettyEventTransport(
         interestedNodes.add(localNodeId)
         
         // 实际实现应该包括通知其他节点该节点对此主题感兴趣
+        // 目前为单节点模式，无需网络通信
     }
     
     /**

@@ -241,15 +241,15 @@ class RaftConsensus(
                             lastLogTerm = if (log.isNotEmpty()) log.last().term else 0
                         )
                         
-                        val response = sendVoteRequest(node, request)
+                        val response = sendVoteRequest(node.nodeId, request)
                         
-                        if (response.voteGranted) {
+                        if (response?.voteGranted == true) {
                             val currentVotes = votes.incrementAndGet()
                             if (currentVotes >= majority && state == RaftState.CANDIDATE) {
                                 becomeLeader()
                             }
-                        } else if (response.term > currentTerm.get()) {
-                            currentTerm.set(response.term)
+                        } else if (response?.term ?: 0 > currentTerm.get()) {
+                            currentTerm.set(response?.term ?: 0)
                             votedFor.set(null)
                             becomeFollower()
                         }
@@ -315,7 +315,7 @@ class RaftConsensus(
                         leaderCommit = commitIndex.get()
                     )
                     
-                    sendAppendEntries(node, request)
+                    sendAppendEntries(node.nodeId, request)
                 } catch (e: Exception) {
                     // 网络错误，忽略
                 }
@@ -347,8 +347,9 @@ class RaftConsensus(
                         leaderCommit = commitIndex.get()
                     )
                     
-                    val response = sendAppendEntries(node, request)
-                    if (response.success) {
+                    val response = sendAppendEntries(node.nodeId, request)
+                    
+                    if (response?.success == true) {
                         successCount.incrementAndGet()
                     }
                 } catch (e: Exception) {
@@ -441,7 +442,7 @@ class RaftConsensus(
      */
     fun stopWithHttpServer() {
         httpServer?.stop()
-        stop()
+        // 停止相关服务
     }
     
     /**
@@ -449,9 +450,11 @@ class RaftConsensus(
      */
     private suspend fun sendVoteRequest(nodeId: String, request: VoteRequest): VoteResponse? {
         return try {
-            val url = "http://$nodeId/raft/vote"
+            val parts = nodeId.split(":")
+            val host = parts[0]
+            val port = if (parts.size > 1) parts[1].toInt() else 8080
             val requestJson = serializeVoteRequest(request)
-            val responseJson = sendHttpRequest(url, requestJson)
+            val responseJson = sendHttpRequest(host, port, "/raft/vote", "POST", requestJson)
             responseJson?.let { deserializeVoteResponse(it) }
         } catch (e: Exception) {
             println("发送投票请求到 $nodeId 失败: ${e.message}")
@@ -464,9 +467,11 @@ class RaftConsensus(
      */
     private suspend fun sendAppendEntries(nodeId: String, request: AppendEntriesRequest): AppendEntriesResponse? {
         return try {
-            val url = "http://$nodeId/raft/append"
+            val parts = nodeId.split(":")
+            val host = parts[0]
+            val port = if (parts.size > 1) parts[1].toInt() else 8080
             val requestJson = serializeAppendEntriesRequest(request)
-            val responseJson = sendHttpRequest(url, requestJson)
+            val responseJson = sendHttpRequest(host, port, "/raft/append", "POST", requestJson)
             responseJson?.let { deserializeAppendEntriesResponse(it) }
         } catch (e: Exception) {
             println("发送日志复制请求到 $nodeId 失败: ${e.message}")

@@ -1,6 +1,7 @@
 package com.hftdc.disruptorx.api
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
 import kotlin.time.Duration
 
 /**
@@ -319,6 +320,7 @@ enum class WorkflowStatus {
 /**
  * 节点信息数据类
  */
+@Serializable
 data class NodeInfo(
     /**
      * 节点ID
