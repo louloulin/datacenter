@@ -2,9 +2,11 @@ package com.hftdc.disruptorx.performance
 
 import com.lmax.disruptor.Sequence
 import com.lmax.disruptor.SequenceBarrier
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.mockito.Mockito.*
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -30,36 +32,35 @@ class AdaptiveWaitStrategyTest {
             maxSleepTimeNanos = 1000000L
         )
         
-        cursor = mock(Sequence::class.java)
-        dependentSequence = mock(Sequence::class.java)
-        barrier = mock(SequenceBarrier::class.java)
+        cursor = mockk<Sequence>()
+        dependentSequence = mockk<Sequence>()
+        barrier = mockk<SequenceBarrier>()
     }
     
     @Test
     fun `test wait strategy with immediate availability`() {
         // 模拟序列立即可用
-        `when`(cursor.get()).thenReturn(10L)
+        every { cursor.get() } returns 10L
+        every { barrier.checkAlert() } returns Unit
         
         val result = waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
         assertEquals(10L, result)
-        verify(cursor, atLeastOnce()).get()
-        verify(barrier, atLeastOnce()).checkAlert()
+        verify(atLeast = 1) { cursor.get() }
+        verify(atLeast = 1) { barrier.checkAlert() }
     }
     
     @Test
     fun `test wait strategy with delayed availability`() {
         // 模拟序列延迟可用
-        `when`(cursor.get())
-            .thenReturn(1L)  // 第一次调用返回1
-            .thenReturn(2L)  // 第二次调用返回2
-            .thenReturn(10L) // 第三次调用返回10（满足条件）
+        every { cursor.get() } returnsMany listOf(1L, 2L, 10L)
+        every { barrier.checkAlert() } returns Unit
         
         val result = waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
         assertEquals(10L, result)
-        verify(cursor, atLeast(3)).get()
-        verify(barrier, atLeast(3)).checkAlert()
+        verify(atLeast = 3) { cursor.get() }
+        verify(atLeast = 3) { barrier.checkAlert() }
     }
     
     @Test
@@ -77,7 +78,8 @@ class AdaptiveWaitStrategyTest {
     @Test
     fun `test strategy reset functionality`() {
         // 执行一些等待操作来改变状态
-        `when`(cursor.get()).thenReturn(10L)
+        every { cursor.get() } returns 10L
+        every { barrier.checkAlert() } returns Unit
         waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
         // 重置策略
@@ -108,8 +110,8 @@ class AdaptiveWaitStrategyTest {
         val initialSpinCount = initialStatus.currentSpinCount
         
         // 模拟高负载情况下的多次等待
-        `when`(cursor.get())
-            .thenReturn(1L, 2L, 3L, 4L, 5L, 10L) // 需要多次等待
+        every { cursor.get() } returnsMany listOf(1L, 2L, 3L, 4L, 5L, 10L)
+        every { barrier.checkAlert() } returns Unit
         
         waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
@@ -122,10 +124,11 @@ class AdaptiveWaitStrategyTest {
     fun `test wait strategy with spinning phase`() {
         // 测试自旋阶段的行为
         var callCount = 0
-        `when`(cursor.get()).thenAnswer {
+        every { cursor.get() } answers {
             callCount++
             if (callCount <= 500) 1L else 10L // 前500次返回1，之后返回10
         }
+        every { barrier.checkAlert() } returns Unit
         
         val result = waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
@@ -137,10 +140,11 @@ class AdaptiveWaitStrategyTest {
     fun `test wait strategy with yielding phase`() {
         // 测试让出CPU阶段的行为
         var callCount = 0
-        `when`(cursor.get()).thenAnswer {
+        every { cursor.get() } answers {
             callCount++
             if (callCount <= 1100) 1L else 10L // 经历自旋+让出阶段
         }
+        every { barrier.checkAlert() } returns Unit
         
         val result = waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
@@ -152,10 +156,11 @@ class AdaptiveWaitStrategyTest {
     fun `test wait strategy with sleep phase`() {
         // 测试睡眠阶段的行为
         var callCount = 0
-        `when`(cursor.get()).thenAnswer {
+        every { cursor.get() } answers {
             callCount++
             if (callCount <= 1200) 1L else 10L // 经历所有阶段
         }
+        every { barrier.checkAlert() } returns Unit
         
         val startTime = System.nanoTime()
         val result = waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
@@ -229,7 +234,8 @@ class AdaptiveWaitStrategyTest {
     @Test
     fun `test wait strategy performance under load`() {
         // 性能测试：测试在高频调用下的表现
-        `when`(cursor.get()).thenReturn(10L)
+        every { cursor.get() } returns 10L
+        every { barrier.checkAlert() } returns Unit
         
         val startTime = System.nanoTime()
         

@@ -1,6 +1,8 @@
 package com.hftdc.disruptorx.distributed
 
 import com.hftdc.disruptorx.api.NodeInfo
+import com.hftdc.disruptorx.api.NodeRole
+import com.hftdc.disruptorx.api.NodeStatus
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -198,8 +200,8 @@ class DistributedLoadBalancerTest {
         assertTrue(hashRing.getAllNodes().isEmpty())
         
         // 添加节点
-        val node1 = NodeInfo("node1", "host1", 8001)
-        val node2 = NodeInfo("node2", "host2", 8002)
+        val node1 = NodeInfo("node1", "host1", 8001, false, NodeRole.WORKER, NodeStatus.ACTIVE)
+        val node2 = NodeInfo("node2", "host2", 8002, false, NodeRole.WORKER, NodeStatus.ACTIVE)
         
         hashRing.addNode(node1)
         hashRing.addNode(node2)

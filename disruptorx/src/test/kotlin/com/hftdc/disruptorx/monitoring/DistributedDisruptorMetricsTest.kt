@@ -1,8 +1,11 @@
 package com.hftdc.disruptorx.monitoring
 
 import com.hftdc.disruptorx.api.NodeInfo
+import com.hftdc.disruptorx.api.NodeRole
+import com.hftdc.disruptorx.api.NodeStatus
 import com.hftdc.disruptorx.distributed.DistributedLoadBalancer
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -26,9 +29,9 @@ class DistributedDisruptorMetricsTest {
         
         // 添加测试节点
         val testNodes = listOf(
-            NodeInfo("test-node-1", "localhost", 8001),
-            NodeInfo("test-node-2", "localhost", 8002),
-            NodeInfo("test-node-3", "localhost", 8003)
+            NodeInfo("test-node-1", "localhost", 8001, false, NodeRole.WORKER, NodeStatus.ACTIVE),
+            NodeInfo("test-node-2", "localhost", 8002, false, NodeRole.WORKER, NodeStatus.ACTIVE),
+            NodeInfo("test-node-3", "localhost", 8003, true, NodeRole.COORDINATOR, NodeStatus.ACTIVE)
         )
         
         testNodes.forEach { node ->
@@ -338,7 +341,7 @@ class DistributedDisruptorMetricsTest {
     fun `test concurrent metrics recording`() = runBlocking {
         // 并发记录指标
         val jobs = (1..10).map { i ->
-            kotlinx.coroutines.launch {
+            launch {
                 distributedMetrics.recordThroughput(i * 100.0)
                 distributedMetrics.recordLatency(i * 1_000_000L)
                 distributedMetrics.recordQueueDepth(i * 10)
