@@ -1,6 +1,8 @@
 package com.hftdc.disruptorx.distributed
 
 import com.hftdc.disruptorx.api.NodeInfo
+import com.hftdc.disruptorx.api.NodeRole
+import com.hftdc.disruptorx.api.NodeStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -22,9 +24,9 @@ class DistributedConsistencyManagerTest {
     @BeforeEach
     fun setUp() {
         clusterNodes = listOf(
-            NodeInfo("node1", "localhost", 8001),
-            NodeInfo("node2", "localhost", 8002),
-            NodeInfo("node3", "localhost", 8003)
+            NodeInfo("node1", "localhost", 8001, false, NodeRole.WORKER, NodeStatus.ACTIVE),
+            NodeInfo("node2", "localhost", 8002, false, NodeRole.WORKER, NodeStatus.ACTIVE),
+            NodeInfo("node3", "localhost", 8003, true, NodeRole.COORDINATOR, NodeStatus.ACTIVE)
         )
         
         consistencyManager = DistributedConsistencyManager(
@@ -146,7 +148,7 @@ class DistributedConsistencyManagerTest {
         // 测试获取条目
         val retrievedEntry = eventLog.getEntry(1)
         assertNotNull(retrievedEntry)
-        assertEquals(entry.eventId, retrievedEntry.event.eventId)
+        assertEquals(entry.event.eventId, retrievedEntry.event.eventId)
     }
     
     @Test

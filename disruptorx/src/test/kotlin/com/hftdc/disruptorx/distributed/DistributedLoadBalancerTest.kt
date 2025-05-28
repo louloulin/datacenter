@@ -21,10 +21,10 @@ class DistributedLoadBalancerTest {
     fun setUp() {
         loadBalancer = DistributedLoadBalancer()
         testNodes = listOf(
-            NodeInfo("node1", "192.168.1.1", 8001),
-            NodeInfo("node2", "192.168.1.2", 8002),
-            NodeInfo("node3", "192.168.1.3", 8003),
-            NodeInfo("node4", "192.168.1.4", 8004)
+            NodeInfo("node1", "192.168.1.1", 8001, false, NodeRole.WORKER, NodeStatus.ACTIVE),
+            NodeInfo("node2", "192.168.1.2", 8002, false, NodeRole.WORKER, NodeStatus.ACTIVE),
+            NodeInfo("node3", "192.168.1.3", 8003, true, NodeRole.COORDINATOR, NodeStatus.ACTIVE),
+            NodeInfo("node4", "192.168.1.4", 8004, false, NodeRole.WORKER, NodeStatus.ACTIVE)
         )
     }
     
