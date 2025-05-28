@@ -131,16 +131,12 @@ class BasicFunctionalityTest {
             nodeId = "custom-node",
             host = "192.168.1.100",
             port = 9090,
-            nodeRole = NodeRole.COORDINATOR,
-            heartbeatIntervalMillis = 1000,
-            eventBatchSize = 50
+            nodeRole = NodeRole.COORDINATOR
         )
         
         assertEquals("custom-node", config.nodeId)
         assertEquals("192.168.1.100", config.host)
         assertEquals(9090, config.port)
         assertEquals(NodeRole.COORDINATOR, config.nodeRole)
-        assertEquals(1000, config.heartbeatIntervalMillis)
-        assertEquals(50, config.eventBatchSize)
     }
 }

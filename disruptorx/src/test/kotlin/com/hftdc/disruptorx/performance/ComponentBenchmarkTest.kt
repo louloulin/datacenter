@@ -341,7 +341,7 @@ class ComponentBenchmarkTest {
                 // 更新计数和序列
                 completedCount.incrementAndGet()
                 if (usePaddedSequence) {
-                    completedSequence.set(completedCount.get())
+                    (completedSequence as PaddedSequence).set(completedCount.get())
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -461,7 +461,7 @@ class ComponentBenchmarkTest {
                 // 更新计数和序列
                 completedCount.incrementAndGet()
                 if (usePaddedSequence) {
-                    completedSequence.set(completedCount.get())
+                    (completedSequence as PaddedSequence).set(completedCount.get())
                 }
                 
                 // 如果使用对象池，回收事件对象
@@ -641,4 +641,4 @@ class ComponentBenchmarkTest {
             sb.setCharAt(index, value)
         }
     }
-} 
+}

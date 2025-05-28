@@ -1,6 +1,8 @@
 package com.hftdc.disruptorx.integration
 
 import com.hftdc.disruptorx.api.NodeInfo
+import com.hftdc.disruptorx.api.NodeRole
+import com.hftdc.disruptorx.api.NodeStatus
 import com.hftdc.disruptorx.consensus.RaftConsensus
 import com.hftdc.disruptorx.distributed.DistributedLockService
 import com.hftdc.disruptorx.monitoring.ConsoleMetricsExporter
@@ -34,9 +36,9 @@ class EnhancedFeaturesTest {
         
         // 初始化 Raft 共识
         val clusterNodes = listOf(
-            NodeInfo("node1", "localhost", 8001),
-            NodeInfo("node2", "localhost", 8002),
-            NodeInfo("node3", "localhost", 8003)
+            NodeInfo("node1", "localhost", 8001, false, NodeRole.MIXED, NodeStatus.ACTIVE),
+            NodeInfo("node2", "localhost", 8002, false, NodeRole.MIXED, NodeStatus.ACTIVE),
+            NodeInfo("node3", "localhost", 8003, false, NodeRole.MIXED, NodeStatus.ACTIVE)
         )
         raftConsensus = RaftConsensus("node1", clusterNodes)
         
