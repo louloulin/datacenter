@@ -58,12 +58,27 @@ class RaftConsensus(
      * 启动 Raft 节点
      */
     suspend fun start() {
-        resetElectionTimeout()
+        println("启动 Raft 节点: $nodeId")
+        becomeFollower()
         
         // 启动消息处理协程
-        CoroutineScope(Dispatchers.Default).launch {
+        CoroutineScope(Dispatchers.IO).launch {
             processMessages()
         }
+    }
+    
+    /**
+     * 获取当前任期
+     */
+    fun getCurrentTerm(): Long {
+        return currentTerm.get()
+    }
+    
+    /**
+     * 检查是否为Leader
+     */
+    fun isLeader(): Boolean {
+        return state == RaftState.LEADER
     }
     
     /**
@@ -383,30 +398,182 @@ class RaftConsensus(
             when (message) {
                 is VoteRequestMessage -> {
                     val response = handleVoteRequest(message.request)
-                    // 发送响应
+                    // 发送响应给发送者
                 }
                 is AppendEntriesMessage -> {
                     val response = handleAppendEntries(message.request)
-                    // 发送响应
+                    // 发送响应给发送者
                 }
             }
         }
     }
     
-    // 网络通信方法（需要具体实现）
-    private suspend fun sendVoteRequest(node: NodeInfo, request: VoteRequest): VoteResponse {
-        // TODO: 实现网络通信
-        throw NotImplementedError("Network communication not implemented")
+    /**
+     * 处理单个消息
+     */
+    private suspend fun handleMessage(message: RaftMessage) {
+        when (message) {
+            is VoteRequestMessage -> {
+                val response = handleVoteRequest(message.request)
+                // 发送响应给发送者
+            }
+            is AppendEntriesMessage -> {
+                val response = handleAppendEntries(message.request)
+                // 发送响应给发送者
+            }
+        }
     }
     
-    private suspend fun sendAppendEntries(node: NodeInfo, request: AppendEntriesRequest): AppendEntriesResponse {
-        // 模拟网络通信 - 在测试环境中返回成功响应
-        return AppendEntriesResponse(
-            term = currentTerm.get(),
-            success = true
+    // HTTP服务器
+    private var httpServer: RaftHttpServer? = null
+    
+    /**
+     * 启动Raft节点和HTTP服务器
+     */
+    suspend fun startWithHttpServer(port: Int) {
+        httpServer = RaftHttpServer(port, this)
+        httpServer?.start()
+        start()
+    }
+    
+    /**
+     * 停止Raft节点和HTTP服务器
+     */
+    fun stopWithHttpServer() {
+        httpServer?.stop()
+        stop()
+    }
+    
+    /**
+     * 发送投票请求到指定节点
+     */
+    private suspend fun sendVoteRequest(nodeId: String, request: VoteRequest): VoteResponse? {
+        return try {
+            val url = "http://$nodeId/raft/vote"
+            val requestJson = serializeVoteRequest(request)
+            val responseJson = sendHttpRequest(url, requestJson)
+            responseJson?.let { deserializeVoteResponse(it) }
+        } catch (e: Exception) {
+            println("发送投票请求到 $nodeId 失败: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * 发送日志复制请求到指定节点
+     */
+    private suspend fun sendAppendEntries(nodeId: String, request: AppendEntriesRequest): AppendEntriesResponse? {
+        return try {
+            val url = "http://$nodeId/raft/append"
+            val requestJson = serializeAppendEntriesRequest(request)
+            val responseJson = sendHttpRequest(url, requestJson)
+            responseJson?.let { deserializeAppendEntriesResponse(it) }
+        } catch (e: Exception) {
+            println("发送日志复制请求到 $nodeId 失败: ${e.message}")
+            null
+        }
+    }
+    
+
+    
+    /**
+     * 简单的HTTP客户端实现
+     */
+    private suspend fun sendHttpRequest(
+        host: String,
+        port: Int,
+        path: String,
+        method: String,
+        body: String
+    ): String = withContext(Dispatchers.IO) {
+        try {
+            val url = java.net.URL("http://$host:$port$path")
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = method
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.doOutput = true
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            
+            // 发送请求体
+            connection.outputStream.use { os ->
+                os.write(body.toByteArray())
+            }
+            
+            // 读取响应
+            val responseCode = connection.responseCode
+            if (responseCode == 200) {
+                connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } else {
+                throw RuntimeException("HTTP错误: $responseCode")
+            }
+        } catch (e: Exception) {
+            throw RuntimeException("网络请求失败: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * 序列化投票请求
+     */
+    private fun serializeVoteRequest(request: VoteRequest): String {
+        return """{
+"term":${request.term},
+"candidateId":"${request.candidateId}",
+"lastLogIndex":${request.lastLogIndex},
+"lastLogTerm":${request.lastLogTerm}
+}"""
+    }
+    
+    /**
+     * 反序列化投票响应
+     */
+    private fun deserializeVoteResponse(json: String): VoteResponse {
+        // 简单的JSON解析
+        val termMatch = """"term":(\d+)""".toRegex().find(json)
+        val voteGrantedMatch = """"voteGranted":(true|false)""".toRegex().find(json)
+        
+        return VoteResponse(
+            term = termMatch?.groupValues?.get(1)?.toLong() ?: 0,
+            voteGranted = voteGrantedMatch?.groupValues?.get(1)?.toBoolean() ?: false
         )
     }
     
+    /**
+     * 序列化日志复制请求
+     */
+    private fun serializeAppendEntriesRequest(request: AppendEntriesRequest): String {
+        val entriesJson = request.entries.joinToString(",") { entry ->
+            """{
+"term":${entry.term},
+"index":${entry.index},
+"data":"${java.util.Base64.getEncoder().encodeToString(entry.data)}",
+"timestamp":${entry.timestamp}
+}"""
+        }
+        return """{
+"term":${request.term},
+"leaderId":"${request.leaderId}",
+"prevLogIndex":${request.prevLogIndex},
+"prevLogTerm":${request.prevLogTerm},
+"entries":[$entriesJson],
+"leaderCommit":${request.leaderCommit}
+}"""
+    }
+    
+    /**
+     * 反序列化日志复制响应
+     */
+    private fun deserializeAppendEntriesResponse(json: String): AppendEntriesResponse {
+        // 简单的JSON解析
+        val termMatch = """"term":(\d+)""".toRegex().find(json)
+        val successMatch = """"success":(true|false)""".toRegex().find(json)
+        
+        return AppendEntriesResponse(
+            term = termMatch?.groupValues?.get(1)?.toLong() ?: 0,
+            success = successMatch?.groupValues?.get(1)?.toBoolean() ?: false
+        )
+    }
+
     /**
      * 应用已提交的日志条目
      */

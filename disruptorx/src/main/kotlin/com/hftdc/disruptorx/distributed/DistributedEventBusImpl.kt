@@ -78,13 +78,11 @@ class DistributedEventBusImpl(
             processReceivedEvent(event, topic)
         } else {
             // 远程发布
-            val node = nodeManager.getClusterMembers().find { it.nodeId == targetNodeId }
+            val clusterMembers = nodeManager.getClusterMembers()
+            val node = clusterMembers.find { it.nodeId == targetNodeId }
             if (node == null) {
-                // 节点不可用，尝试重新路由
-                routingCacheMutex.withLock {
-                    topicRoutingCache.remove(topic)
-                }
-                publish(event, topic) // 递归重试
+                // 节点不可用，回退到本地处理
+                processReceivedEvent(event, topic)
                 return
             }
             
@@ -145,7 +143,7 @@ class DistributedEventBusImpl(
                     handler(event)
                 } catch (e: Exception) {
                     // 记录错误但不影响其他处理器
-                    // TODO: 添加适当的错误处理和日志记录
+                    println("Error processing event: ${e.message}")
                 }
             }
         }
@@ -170,16 +168,20 @@ class DistributedEventBusImpl(
             val targetNodeId = if (interestedNodes.isEmpty()) {
                 // 没有节点对此主题感兴趣，使用一致性哈希选择节点
                 val nodes = nodeManager.getClusterMembers()
-                if (nodes.isEmpty()) {
-                    localNodeId // 退化为本地处理
+                if (nodes.isEmpty() || nodes.size == 1) {
+                    localNodeId // 单节点模式或无其他节点，本地处理
                 } else {
                     val hashCode = topic.hashCode()
                     val index = Math.abs(hashCode % nodes.size)
                     nodes[index].nodeId
                 }
             } else {
-                // 有节点对此主题感兴趣，选择第一个
-                interestedNodes.first()
+                // 有节点对此主题感兴趣，优先选择本地节点
+                if (interestedNodes.contains(localNodeId)) {
+                    localNodeId
+                } else {
+                    interestedNodes.first()
+                }
             }
             
             // 缓存路由结果
@@ -256,11 +258,8 @@ class NettyEventTransport(
      * @param targetNode 目标节点
      */
     suspend fun sendEvent(event: Any, topic: String, targetNode: NodeInfo) {
-        // 实际实现应该包括：
-        // 1. 获取或创建与目标节点的连接
-        // 2. 序列化事件
-        // 3. 发送事件和主题
-        // 此处为简化实现
+        // 简化实现：直接在本地处理事件（模拟网络传输）
+        eventReceiver?.invoke(event, topic)
     }
     
     /**
@@ -296,4 +295,4 @@ class NettyEventTransport(
     suspend fun getNodesInterestedInTopic(topic: String): List<String> {
         return topicInterests[topic]?.toList() ?: emptyList()
     }
-} 
+}
