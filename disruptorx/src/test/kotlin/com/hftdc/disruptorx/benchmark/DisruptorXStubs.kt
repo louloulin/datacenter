@@ -2,6 +2,7 @@ package com.hftdc.disruptorx
 
 import com.hftdc.disruptorx.api.EventHandler
 import com.hftdc.disruptorx.api.NodeRole
+import com.hftdc.disruptorx.api.PartitionStrategy
 import com.hftdc.disruptorx.api.Workflow
 import com.hftdc.disruptorx.api.WorkflowSink
 import com.hftdc.disruptorx.api.WorkflowSource
@@ -87,7 +88,7 @@ class DisruptorXNode(val config: DisruptorXConfig) {
         }
         
         fun status(id: String): WorkflowStatus {
-            return workflowStatuses[id] ?: WorkflowStatus.UNKNOWN
+            return workflowStatuses[id] ?: WorkflowStatus.ERROR
         }
         
         fun startWorkflow(id: String): CompletableFuture<Void> {
@@ -116,6 +117,10 @@ class WorkflowImpl(override val id: String, override val name: String = "Test Wo
     }
     
     class SourceImpl(override val topic: String) : WorkflowSource {
+        override val partitionStrategy: PartitionStrategy = object : PartitionStrategy {
+            override fun getPartition(key: Any, partitionCount: Int): Int = Math.abs(key.hashCode() % partitionCount)
+        }
+        
         fun partitionBy(partitioner: (Any) -> Int) {
             // Stub implementation
         }
@@ -170,4 +175,4 @@ data class BenchmarkMessage(
 enum class NodeRole {
     COORDINATOR,
     WORKER
-} 
+}

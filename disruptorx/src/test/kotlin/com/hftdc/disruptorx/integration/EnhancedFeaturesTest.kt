@@ -42,6 +42,13 @@ class EnhancedFeaturesTest {
         )
         raftConsensus = RaftConsensus("node1", clusterNodes)
         
+        // 启动 Raft 共识并等待成为 Leader
+        runBlocking {
+            raftConsensus.start()
+            // 强制设置为 Leader 状态用于测试
+            raftConsensus.becomeLeader()
+        }
+        
         // 初始化分布式锁服务
         lockService = DistributedLockService(raftConsensus, "node1")
         
