@@ -18,9 +18,8 @@ class OrderMetricsHandlerTest {
     
     @BeforeEach
     fun setUp() {
-        // Clear registry before each test
-        CollectorRegistry.defaultRegistry.clear()
-        // Reinitialize the handler
+        // Don't clear the registry as it would invalidate the MetricsRegistry counters
+        // Instead, just reinitialize the handler
         orderMetricsHandler = OrderMetricsHandler()
     }
     
@@ -28,15 +27,18 @@ class OrderMetricsHandlerTest {
     fun `test record order received`() {
         // Given
         val order = createTestOrder(OrderStatus.NEW)
+        val initialCount = MetricsRegistry.orderProcessedCounter
+            .labels(order.instrumentId, order.side.name.lowercase(), order.type.name.lowercase())
+            .get()
         
         // When
         orderMetricsHandler.recordOrderReceived(order)
         
         // Then
-        val count = MetricsRegistry.orderProcessedCounter
+        val finalCount = MetricsRegistry.orderProcessedCounter
             .labels(order.instrumentId, order.side.name.lowercase(), order.type.name.lowercase())
             .get()
-        assertEquals(1.0, count, 0.001)
+        assertEquals(initialCount + 1.0, finalCount, 0.001)
     }
     
     @Test
@@ -48,19 +50,29 @@ class OrderMetricsHandlerTest {
             createTestTrade(order, 3)
         )
         
+        val initialExecutedCount = MetricsRegistry.orderExecutedCounter
+            .labels(order.instrumentId, order.side.name.lowercase())
+            .get()
+        val initialTradeVolume = MetricsRegistry.tradeVolumeCounter
+            .labels(order.instrumentId)
+            .get()
+        
+        // First record order received to set start time
+        orderMetricsHandler.recordOrderReceived(order)
+        
         // When
         orderMetricsHandler.recordOrderExecuted(order, trades)
         
         // Then
-        val executedCount = MetricsRegistry.orderExecutedCounter
+        val finalExecutedCount = MetricsRegistry.orderExecutedCounter
             .labels(order.instrumentId, order.side.name.lowercase())
             .get()
-        assertEquals(1.0, executedCount, 0.001)
+        assertEquals(initialExecutedCount + 1.0, finalExecutedCount, 0.001)
         
-        val tradeVolume = MetricsRegistry.tradeVolumeCounter
+        val finalTradeVolume = MetricsRegistry.tradeVolumeCounter
             .labels(order.instrumentId)
             .get()
-        assertEquals(8.0, tradeVolume, 0.001) // 5 + 3 = 8
+        assertEquals(initialTradeVolume + 8.0, finalTradeVolume, 0.001) // 5 + 3 = 8
         
         // Verify that order processing time was recorded
         val histogram = MetricsRegistry.orderProcessingTimeHistogram
@@ -73,15 +85,21 @@ class OrderMetricsHandlerTest {
     fun `test record order cancelled`() {
         // Given
         val order = createTestOrder(OrderStatus.CANCELED)
+        val initialCancelledCount = MetricsRegistry.ordersCancelledCounter
+            .labels(order.instrumentId, order.side.name.lowercase())
+            .get()
+        
+        // First record order received to set start time
+        orderMetricsHandler.recordOrderReceived(order)
         
         // When
         orderMetricsHandler.recordOrderCancelled(order)
         
         // Then
-        val cancelledCount = MetricsRegistry.ordersCancelledCounter
+        val finalCancelledCount = MetricsRegistry.ordersCancelledCounter
             .labels(order.instrumentId, order.side.name.lowercase())
             .get()
-        assertEquals(1.0, cancelledCount, 0.001)
+        assertEquals(initialCancelledCount + 1.0, finalCancelledCount, 0.001)
         
         // Verify that order processing time was recorded
         val histogram = MetricsRegistry.orderProcessingTimeHistogram
@@ -94,6 +112,9 @@ class OrderMetricsHandlerTest {
     fun `test record order completed`() {
         // Given
         val order = createTestOrder(OrderStatus.FILLED)
+        
+        // First record order received to set start time
+        orderMetricsHandler.recordOrderReceived(order)
         
         // When
         orderMetricsHandler.recordOrderCompleted(order)
@@ -171,4 +192,4 @@ class OrderMetricsHandlerTest {
             sellFee = 10
         )
     }
-} 
+}

@@ -75,6 +75,13 @@ interface WorkflowManager {
      * @return 工作流状态
      */
     fun status(workflowId: String): WorkflowStatus
+    
+    /**
+     * 获取工作流
+     * @param workflowId 工作流ID
+     * @return 工作流定义，如果不存在则返回null
+     */
+    fun getWorkflow(workflowId: String): Workflow?
 }
 
 /**

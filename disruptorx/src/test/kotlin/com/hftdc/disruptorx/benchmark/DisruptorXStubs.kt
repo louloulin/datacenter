@@ -91,6 +91,10 @@ class DisruptorXNode(val config: DisruptorXConfig) {
             return workflowStatuses[id] ?: WorkflowStatus.ERROR
         }
         
+        fun getWorkflow(id: String): Workflow? {
+            return workflows[id]
+        }
+        
         fun startWorkflow(id: String): CompletableFuture<Void> {
             start(id)
             return CompletableFuture.completedFuture(null)

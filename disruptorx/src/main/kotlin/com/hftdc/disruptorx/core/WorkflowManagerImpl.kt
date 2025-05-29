@@ -71,7 +71,7 @@ class WorkflowManagerImpl(
      * @param workflowId 工作流ID
      */
     override fun start(workflowId: String) {
-        val workflow = getWorkflow(workflowId)
+        val workflow = getWorkflowOrThrow(workflowId)
         
         launch {
             val lock = operationLocks[workflowId] ?: return@launch
@@ -108,7 +108,7 @@ class WorkflowManagerImpl(
      * @param workflowId 工作流ID
      */
     override fun stop(workflowId: String) {
-        val workflow = getWorkflow(workflowId)
+        val workflow = getWorkflowOrThrow(workflowId)
         
         launch {
             val lock = operationLocks[workflowId] ?: return@launch
@@ -209,9 +209,18 @@ class WorkflowManagerImpl(
     /**
      * 获取工作流定义
      * @param workflowId 工作流ID
+     * @return 工作流定义，如果不存在则返回null
+     */
+    override fun getWorkflow(workflowId: String): Workflow? {
+        return workflowRegistry[workflowId]
+    }
+    
+    /**
+     * 获取工作流定义（内部使用，抛出异常）
+     * @param workflowId 工作流ID
      * @return 工作流定义
      */
-    private fun getWorkflow(workflowId: String): Workflow {
+    private fun getWorkflowOrThrow(workflowId: String): Workflow {
         return workflowRegistry[workflowId] ?: throw IllegalArgumentException("Workflow with ID $workflowId does not exist")
     }
     
@@ -314,4 +323,4 @@ class WorkflowManagerImpl(
 data class WorkflowManagerConfig(
     val maxConcurrentWorkflows: Int = 100,
     val defaultExecutorThreads: Int = Runtime.getRuntime().availableProcessors()
-) 
+)
