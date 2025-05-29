@@ -60,14 +60,21 @@ class BasicFunctionalityTest {
             node.initialize()
             
             // 订阅事件
+            println("Test: About to subscribe to test.topic")
             node.eventBus.subscribe("test.topic") { event ->
+                println("Test: Received event: $event")
                 receivedEvents.add(event.toString())
                 eventCount.incrementAndGet()
             }
             
+            // 等待订阅注册完成
+            delay(100)
+            
             // 发布事件
             val testEvents = listOf("事件1", "事件2", "事件3")
+            println("Test: About to publish ${testEvents.size} events")
             testEvents.forEach { event ->
+                println("Test: Publishing event: $event")
                 node.eventBus.publish(event, "test.topic")
             }
             
@@ -75,6 +82,8 @@ class BasicFunctionalityTest {
             delay(500)
             
             // 验证事件接收
+            println("Test: Expected ${testEvents.size}, got ${eventCount.get()}")
+            println("Test: Received events: $receivedEvents")
             assertEquals(testEvents.size, eventCount.get())
             assertTrue(receivedEvents.containsAll(testEvents))
             
@@ -107,6 +116,9 @@ class BasicFunctionalityTest {
             node.eventBus.subscribe("topic2") { event ->
                 topic2Events.add(event.toString())
             }
+            
+            // 等待订阅注册完成
+            delay(100)
             
             // 发布到不同主题
             node.eventBus.publish("Topic1事件", "topic1")

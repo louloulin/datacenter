@@ -36,6 +36,10 @@ class DistributedDisruptorMetrics(
     // 指标聚合器
     private val aggregator = MetricsAggregator()
     
+    // 运行状态标志
+    @Volatile
+    private var isRunning = true
+    
     init {
         // 启动指标同步协程
         scope.launch {
@@ -208,13 +212,18 @@ class DistributedDisruptorMetrics(
      * 启动指标同步
      */
     private suspend fun startMetricsSync() {
-        while (true) {
+        while (isRunning) {
             try {
                 val sync = metricsSyncChannel.receive()
                 processMetricsSync(sync)
             } catch (e: Exception) {
-                // 记录错误但继续运行
-                println("Error in metrics sync: ${e.message}")
+                if (isRunning) {
+                    // 只在运行状态下记录错误
+                    println("Error in metrics sync: ${e.message}")
+                } else {
+                    // 如果已经停止运行，退出循环
+                    break
+                }
             }
         }
     }
@@ -262,7 +271,7 @@ class DistributedDisruptorMetrics(
      * 启动指标聚合
      */
     private suspend fun startMetricsAggregation() {
-        while (true) {
+        while (isRunning) {
             delay(5.seconds)
             
             try {
@@ -272,7 +281,9 @@ class DistributedDisruptorMetrics(
                 // 触发指标聚合
                 aggregator.triggerAggregation()
             } catch (e: Exception) {
-                println("Error in metrics aggregation: ${e.message}")
+                if (isRunning) {
+                    println("Error in metrics aggregation: ${e.message}")
+                }
             }
         }
     }
@@ -328,8 +339,10 @@ class DistributedDisruptorMetrics(
      * 关闭指标收集器
      */
     fun shutdown() {
-        scope.cancel()
+        isRunning = false
         metricsSyncChannel.close()
+        scope.cancel()
+        localMetrics.shutdown()
     }
 }
 

@@ -178,20 +178,25 @@ class ZeroCopySerializer {
      * 估计对象序列化后的大小
      */
     private fun calculateSize(obj: Any): Int {
-        // 默认大小
-        var size = 256
+        // 增加默认大小以避免缓冲区不足
+        var size = 1024
         
         when (obj) {
-            is String -> size = obj.length * 2 + 8
-            is ByteArray -> size = obj.size + 8
-            is IntArray -> size = obj.size * 4 + 8
-            is LongArray -> size = obj.size * 8 + 8
-            is DoubleArray -> size = obj.size * 8 + 8
-            is Collection<*> -> size = obj.size * 64 + 16
-            is Map<*, *> -> size = obj.size * 128 + 16
+            is String -> size = obj.length * 3 + 16  // 增加安全边距
+            is ByteArray -> size = obj.size + 16
+            is IntArray -> size = obj.size * 4 + 16
+            is LongArray -> size = obj.size * 8 + 16
+            is DoubleArray -> size = obj.size * 8 + 16
+            is Collection<*> -> size = obj.size * 128 + 32
+            is Map<*, *> -> size = obj.size * 256 + 32
+            else -> {
+                // 对于复杂对象，使用更大的默认大小
+                size = 2048
+            }
         }
         
-        return size
+        // 确保最小大小
+        return maxOf(size, 512)
     }
     
     /**
@@ -804,4 +809,4 @@ class BufferPool {
         value++
         return value
     }
-} 
+}

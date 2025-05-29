@@ -152,10 +152,15 @@ internal class DisruptorXNodeImpl(
      * 初始化节点
      */
     override fun initialize() {
-        nodeManager.initialize()
-        
-        runBlocking {
-            (eventBus as DistributedEventBusImpl).initialize()
+        try {
+            nodeManager.initialize()
+            
+            runBlocking {
+                (eventBus as DistributedEventBusImpl).initialize()
+            }
+        } catch (e: Exception) {
+            println("Error initializing DisruptorX node: ${e.message}")
+            throw e
         }
     }
     
@@ -200,4 +205,4 @@ data class DisruptorXConfig(
     val eventBatchTimeWindowMillis: Long = 10,
     val maxConcurrentWorkflows: Int = 100,
     val defaultExecutorThreads: Int = Runtime.getRuntime().availableProcessors()
-) 
+)
