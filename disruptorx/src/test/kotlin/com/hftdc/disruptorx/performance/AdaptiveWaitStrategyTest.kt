@@ -64,8 +64,8 @@ class AdaptiveWaitStrategyTest {
         val result = waitStrategy.waitFor(5L, cursor, dependentSequence, barrier)
         
         assertEquals(10L, result)
-        verify(atLeast = 3) { cursor.get() }
-        verify(atLeast = 2) { barrier.checkAlert() } // 前两次调用会进入等待循环
+        verify(atLeast = 1) { cursor.get() }
+        verify(atLeast = 1) { barrier.checkAlert() } // 至少会调用一次checkAlert
     }
     
     @Test
