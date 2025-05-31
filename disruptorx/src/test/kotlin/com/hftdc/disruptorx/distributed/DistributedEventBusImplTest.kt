@@ -3,7 +3,6 @@ package com.hftdc.disruptorx.distributed
 import com.hftdc.disruptorx.api.NodeInfo
 import com.hftdc.disruptorx.api.NodeRole
 import com.hftdc.disruptorx.api.NodeStatus
-import com.hftdc.disruptorx.api.ReplicationMode
 import com.hftdc.disruptorx.distributed.DistributedEventBusImpl
 import com.hftdc.disruptorx.distributed.NodeManagerImpl
 import com.hftdc.disruptorx.distributed.DistributedEventBusConfig
@@ -37,8 +36,7 @@ class DistributedEventBusImplTest {
         // 创建模拟节点管理器
         nodeManager = mockk(relaxed = true)
         
-        // 配置节点管理器行为
-        every { nodeManager.getLocalNodeId() } returns localNodeId
+        // 配置节点管理器行为 (NodeManagerImpl doesn't have getLocalNodeId method)
         
         // 创建本地节点和远程节点信息
         val localNode = NodeInfo(
@@ -60,7 +58,7 @@ class DistributedEventBusImplTest {
         )
         
         // 配置集群成员列表
-        every { nodeManager.getClusterMembers() } returns listOf(localNode, remoteNode)
+        coEvery { nodeManager.getClusterMembers() } returns listOf(localNode, remoteNode)
         
         // 创建分布式事件总线
         eventBus = DistributedEventBusImpl(

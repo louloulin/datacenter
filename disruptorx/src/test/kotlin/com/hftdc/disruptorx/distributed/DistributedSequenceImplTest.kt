@@ -29,7 +29,7 @@ class DistributedSequenceImplTest {
         sequenceBroadcaster = mockk(relaxed = true)
         
         // 配置nodeManager的行为
-        every { nodeManager.getLocalNodeId() } returns localNodeId
+        // NodeManagerImpl doesn't have getLocalNodeId method
         
         // 创建本地序列和远程序列实例
         localSequence = DistributedSequenceImpl(
