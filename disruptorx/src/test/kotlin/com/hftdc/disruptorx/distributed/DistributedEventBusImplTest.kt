@@ -13,6 +13,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
@@ -132,16 +133,22 @@ class DistributedEventBusImplTest {
                 status = NodeStatus.ACTIVE
             )
         )
-        
+
         // 初始化事件总线
-        try {
-            eventBus.initialize()
-            // 如果初始化成功，验证节点管理器被查询
-            coVerify(atLeast = 1) { nodeManager.getClusterMembers() }
-        } catch (e: Exception) {
-            // 如果初始化失败，至少验证尝试了获取集群成员
-            coVerify(atLeast = 1) { nodeManager.getClusterMembers() }
+        eventBus.initialize()
+
+        // 验证初始化成功 - 检查事件总线是否可以正常工作
+        var eventReceived = false
+        eventBus.subscribe("test-topic") {
+            eventReceived = true
         }
+
+        eventBus.publish("test-event", "test-topic")
+
+        // 给事件处理一些时间
+        delay(100)
+
+        assertTrue(eventReceived, "Event should be received after initialization")
     }
     
     @Test
@@ -198,39 +205,41 @@ class DistributedEventBusImplTest {
         // 准备测试数据
         val topic = "test-topic"
         val event = "test-event"
-        
-        // 模拟远程节点配置
-        val remoteNode = NodeInfo(
-            nodeId = "remote-node-1",
-            host = "remote-host",
-            port = 9090,
-            isLeader = false,
-            role = NodeRole.MIXED,
-            status = NodeStatus.ACTIVE
+
+        // 配置本地节点
+        coEvery {
+            nodeManager.getClusterMembers()
+        } returns listOf(
+            NodeInfo(
+                nodeId = localNodeId,
+                host = "localhost",
+                port = 9090,
+                isLeader = true,
+                role = NodeRole.MIXED,
+                status = NodeStatus.ACTIVE
+            )
         )
-        
-        coEvery { 
-            nodeManager.getClusterMembers() 
-        } returns listOf(remoteNode)
-        
-        // 初始化事件总线 (使用mock配置)
-        try {
-            eventBus.initialize()
-        } catch (e: Exception) {
-            // 初始化失败时跳过测试
-            return@runTest
+
+        // 初始化事件总线
+        eventBus.initialize()
+
+        // 设置事件处理器来验证事件路由
+        var eventReceived = false
+        var receivedEvent: Any? = null
+
+        eventBus.subscribe(topic) { receivedEventData ->
+            eventReceived = true
+            receivedEvent = receivedEventData
         }
-        
+
         // 发布事件
-        try {
-            eventBus.publish(event, topic)
-        } catch (e: Exception) {
-            // 发布可能失败，但这不影响测试目标
-        }
-        
-        // 验证事件被路由到正确的节点 (至少查询了集群成员)
-        coVerify(atLeast = 1) { 
-            nodeManager.getClusterMembers() 
-        }
+        eventBus.publish(event, topic)
+
+        // 给事件处理一些时间
+        delay(100)
+
+        // 验证事件被正确路由和处理
+        assertTrue(eventReceived, "Event should be received")
+        assertEquals(event, receivedEvent, "Received event should match published event")
     }
 }
