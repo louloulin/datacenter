@@ -26,18 +26,23 @@ class DistributedSequenceImpl(
     initialValue: Long = -1,
     private val sequenceBroadcaster: SequenceBroadcaster
 ) : DistributedSequence, CoroutineScope {
-    
+
     private val job = SupervisorJob()
     override val coroutineContext: CoroutineContext = Dispatchers.Default + job
-    
+
     // 本地序列值
     private val localValue = AtomicLong(initialValue)
-    
+
     // 最后广播的值
     private val lastBroadcastValue = AtomicLong(initialValue)
-    
+
     // 广播阈值
     private val broadcastThreshold = 64L
+
+    // 缓存本地节点判断结果
+    private val isLocalNode: Boolean by lazy {
+        nodeId == nodeManager.getLocalNodeId()
+    }
     
     /**
      * 获取当前序列值
@@ -52,15 +57,15 @@ class DistributedSequenceImpl(
      * @param value 新的序列值
      */
     override fun set(value: Long) {
-        val oldValue = localValue.getAndSet(value)
-        
+        localValue.set(value)
+
         // 如果是非本地序列，只更新本地值
         if (!isLocal()) {
             return
         }
         
         // 对于本地序列，检查是否需要广播更新
-        if (shouldBroadcast(oldValue, value)) {
+        if (shouldBroadcast(value)) {
             broadcastValue(value)
         }
     }
@@ -78,7 +83,7 @@ class DistributedSequenceImpl(
         }
         
         // 对于本地序列，检查是否需要广播更新
-        if (shouldBroadcast(newValue - 1, newValue)) {
+        if (shouldBroadcast(newValue)) {
             broadcastValue(newValue)
         }
         
@@ -99,7 +104,7 @@ class DistributedSequenceImpl(
         }
         
         // 对于本地序列，检查是否需要广播更新
-        if (shouldBroadcast(newValue - increment, newValue)) {
+        if (shouldBroadcast(newValue)) {
             broadcastValue(newValue)
         }
         
@@ -111,7 +116,7 @@ class DistributedSequenceImpl(
      * @return 是否本地序列
      */
     fun isLocal(): Boolean {
-        return nodeId == nodeManager.getLocalNodeId()
+        return isLocalNode
     }
     
     /**
@@ -136,14 +141,13 @@ class DistributedSequenceImpl(
     
     /**
      * 检查是否应该广播序列值
-     * @param oldValue 旧值
      * @param newValue 新值
      * @return 是否应该广播
      */
-    private fun shouldBroadcast(oldValue: Long, newValue: Long): Boolean {
+    private fun shouldBroadcast(newValue: Long): Boolean {
         // 如果增量达到阈值或序列为初始值后的首次更新，则广播
         val lastBroadcast = lastBroadcastValue.get()
-        return newValue - lastBroadcast >= broadcastThreshold || 
+        return newValue - lastBroadcast >= broadcastThreshold ||
                (lastBroadcast == -1L && newValue > -1L)
     }
     

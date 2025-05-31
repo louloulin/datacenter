@@ -27,9 +27,9 @@ class DistributedSequenceImplTest {
         // 创建模拟依赖
         nodeManager = mockk(relaxed = true)
         sequenceBroadcaster = mockk(relaxed = true)
-        
+
         // 配置nodeManager的行为
-        // NodeManagerImpl doesn't have getLocalNodeId method
+        every { nodeManager.getLocalNodeId() } returns localNodeId
         
         // 创建本地序列和远程序列实例
         localSequence = DistributedSequenceImpl(
