@@ -73,9 +73,9 @@ class MessageHandler(private val latencyRecorder: LatencyRecorder) {
         // 例如简单的CRC计算或其他操作
         var checksum = 0L
         for (byte in message.payload) {
-            checksum = (checksum * 31) + byte
+            checksum = (checksum * 31) + byte.toLong()
         }
-        
+
         // 防止JIT优化删除这个计算
         if (checksum == Long.MIN_VALUE) {
             println("Unlikely checksum: $checksum")

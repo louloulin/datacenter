@@ -294,8 +294,7 @@ class DisruptorXBenchmark {
                 nodeId = nodeId,
                 host = "localhost",
                 port = port,
-                nodeRole = if (i == 0) NodeRole.COORDINATOR else NodeRole.WORKER,
-                seedNodes = listOf("localhost:$basePort")
+                nodeRole = if (i == 0) NodeRole.COORDINATOR else NodeRole.WORKER
             )
             
             val node = DisruptorX.createNode(config)

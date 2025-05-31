@@ -19,24 +19,33 @@ class MetricsCollector {
     private val gauges = ConcurrentHashMap<String, DoubleAdder>()
     private val histograms = ConcurrentHashMap<String, Histogram>()
     private val timers = ConcurrentHashMap<String, Timer>()
-    
+
     private val metricsChannel = Channel<MetricEvent>(Channel.UNLIMITED)
     private val mutex = Mutex()
-    
+
     // 指标标签
     private val metricTags = ConcurrentHashMap<String, Map<String, String>>()
-    
+
     // 指标导出器
     private val exporters = mutableListOf<MetricsExporter>()
-    
+
+    // 协程作用域和任务
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var metricsProcessorJob: Job? = null
+    private var exporterJob: Job? = null
+
+    // 运行状态标志
+    @Volatile
+    private var isRunning = true
+
     init {
         // 启动指标处理协程
-        CoroutineScope(Dispatchers.Default).launch {
+        metricsProcessorJob = scope.launch {
             processMetrics()
         }
-        
+
         // 启动定期导出协程
-        CoroutineScope(Dispatchers.Default).launch {
+        exporterJob = scope.launch {
             exportMetricsPeriodically()
         }
     }
@@ -193,6 +202,21 @@ class MetricsCollector {
             metricTags.clear()
         }
     }
+
+    /**
+     * 关闭指标收集器
+     */
+    fun shutdown() {
+        isRunning = false
+        metricsChannel.close()
+
+        // 取消协程任务
+        metricsProcessorJob?.cancel()
+        exporterJob?.cancel()
+
+        // 取消整个作用域
+        scope.cancel()
+    }
     
     /**
      * 构建指标名称
@@ -211,22 +235,31 @@ class MetricsCollector {
      * 处理指标事件
      */
     private suspend fun processMetrics() {
-        for (event in metricsChannel) {
-            // 这里可以添加实时指标处理逻辑
-            // 例如：异常检测、告警触发等
-            when (event) {
-                is MetricEvent.CounterEvent -> {
-                    // 处理计数器事件
+        try {
+            for (event in metricsChannel) {
+                if (!isRunning) break
+
+                // 这里可以添加实时指标处理逻辑
+                // 例如：异常检测、告警触发等
+                when (event) {
+                    is MetricEvent.CounterEvent -> {
+                        // 处理计数器事件
+                    }
+                    is MetricEvent.GaugeEvent -> {
+                        // 处理仪表盘事件
+                    }
+                    is MetricEvent.HistogramEvent -> {
+                        // 处理直方图事件
+                    }
+                    is MetricEvent.TimerEvent -> {
+                        // 处理计时器事件
+                    }
                 }
-                is MetricEvent.GaugeEvent -> {
-                    // 处理仪表盘事件
-                }
-                is MetricEvent.HistogramEvent -> {
-                    // 处理直方图事件
-                }
-                is MetricEvent.TimerEvent -> {
-                    // 处理计时器事件
-                }
+            }
+        } catch (e: Exception) {
+            if (isRunning) {
+                // 只在运行状态下记录错误
+                println("Error in metrics processing: ${e.message}")
             }
         }
     }
@@ -235,9 +268,11 @@ class MetricsCollector {
      * 定期导出指标
      */
     private suspend fun exportMetricsPeriodically() {
-        while (true) {
+        while (isRunning) {
             delay(EXPORT_INTERVAL)
-            
+
+            if (!isRunning) break
+
             try {
                 val snapshot = getAllMetrics()
                 exporters.forEach { exporter ->
@@ -245,10 +280,16 @@ class MetricsCollector {
                         exporter.export(snapshot)
                     } catch (e: Exception) {
                         // 记录导出错误，但不影响其他导出器
+                        if (isRunning) {
+                            println("Error exporting metrics: ${e.message}")
+                        }
                     }
                 }
             } catch (e: Exception) {
                 // 记录错误
+                if (isRunning) {
+                    println("Error in metrics export: ${e.message}")
+                }
             }
         }
     }

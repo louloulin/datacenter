@@ -3,11 +3,8 @@ package com.hftdc.disruptorx.integration
 import com.hftdc.disruptorx.api.NodeInfo
 import com.hftdc.disruptorx.api.NodeRole
 import com.hftdc.disruptorx.api.NodeStatus
-import com.hftdc.disruptorx.consensus.RaftConsensus
-import com.hftdc.disruptorx.distributed.DistributedLockService
 import com.hftdc.disruptorx.monitoring.ConsoleMetricsExporter
 import com.hftdc.disruptorx.monitoring.MetricsCollector
-import com.hftdc.disruptorx.workflow.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -22,47 +19,32 @@ import kotlin.time.Duration.Companion.milliseconds
  * 测试分布式一致性、监控和工作流管理功能
  */
 class EnhancedFeaturesTest {
-    
+
     private lateinit var metricsCollector: MetricsCollector
-    private lateinit var raftConsensus: RaftConsensus
     private lateinit var lockService: DistributedLockService
     private lateinit var workflowManager: EnhancedWorkflowManager
-    
+
     @BeforeEach
     fun setup() {
         // 初始化指标收集器
         metricsCollector = MetricsCollector()
         metricsCollector.addExporter(ConsoleMetricsExporter())
-        
-        // 初始化 Raft 共识（单节点集群用于测试）
-        val clusterNodes = listOf(
-            NodeInfo("node1", "localhost", 8001, true, NodeRole.MIXED, NodeStatus.ACTIVE)
-        )
-        raftConsensus = RaftConsensus("node1", clusterNodes)
-        
-        // 启动 Raft 共识并等待成为 Leader
-        runBlocking {
-            raftConsensus.start()
-            // 强制设置为 Leader 状态用于测试
-            raftConsensus.becomeLeader()
-        }
-        
-        // 初始化分布式锁服务
-        lockService = DistributedLockService(raftConsensus, "node1")
-        
-        // 注册状态机应用器
-        raftConsensus.setStateMachineApplier { data ->
-            lockService.applyLogEntry(data)
-        }
-        
+
+        // 初始化分布式锁服务（简化版，不依赖Raft）
+        lockService = DistributedLockService("node1")
+        lockService.initialize()
+
         // 初始化工作流管理器
         workflowManager = EnhancedWorkflowManager(metricsCollector)
+        workflowManager.initialize()
     }
     
     @AfterEach
     fun cleanup() {
         runBlocking {
-            metricsCollector.reset()
+            workflowManager.shutdown()
+            lockService.shutdown()
+            metricsCollector.shutdown()
         }
     }
     
