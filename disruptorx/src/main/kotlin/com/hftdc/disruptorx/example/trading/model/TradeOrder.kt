@@ -182,4 +182,29 @@ data class TradeOrder(
             )
         }
     }
-} 
+}
+
+/**
+ * 交易记录
+ */
+data class Trade(
+    val tradeId: String,
+    val orderId: String,
+    val symbol: String,
+    val side: OrderSide,
+    val quantity: Long,
+    val price: BigDecimal,
+    val timestamp: Long
+)
+
+/**
+ * 市场数据
+ */
+data class MarketData(
+    val symbol: String,
+    val bidPrice: BigDecimal,
+    val askPrice: BigDecimal,
+    val lastPrice: BigDecimal,
+    val volume: Long,
+    val timestamp: Long
+)
